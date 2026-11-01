@@ -16,6 +16,7 @@ async function setup(page: Page) {
   await page.routeWebSocket("**/api/ws", ws => { model.sockets.push(ws); ws.send(JSON.stringify({ type: "state", state })); ws.onMessage(() => {}); });
   await page.route("**/api/**", async route => {
     const request = route.request(), url = new URL(request.url());
+    if (url.pathname.endsWith("/conversation")) return route.fulfill({ json: { available: false, reason: "not_found", session: null, revision: "0", turns: [], nextCursor: null } });
     if (url.pathname === "/api/state") return route.fulfill({ json: state });
     if (url.pathname.endsWith("/screen")) return route.fulfill({ json: { terminal: { ...terminal, id: decodeURIComponent(url.pathname.split("/")[3]) }, text: "Review the current choice", screenId: model.screenId, complete: true, prompt: null } });
     if (url.pathname.endsWith("/uploads")) {
@@ -38,7 +39,8 @@ async function setup(page: Page) {
   });
   await page.goto("/");
   await page.getByRole("button", { name: "S Sample", exact: true }).tap();
-  await expect(page.getByRole("button", { name: "Show readable text" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Terminal view", exact: true })).toBeVisible();
+  await expect(page.locator(".conversation")).toBeVisible();
   return model;
 }
 async function choose(page: Page, files = [png, text]) {

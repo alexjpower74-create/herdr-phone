@@ -99,6 +99,7 @@ async function setup(page: Page) {
     const path = new URL(request.url()).pathname;
     if (request.method() === "POST")
       writes.push({ path, body: request.postDataJSON() });
+    if (path.endsWith("/conversation")) return route.fulfill({ json: { available: false, reason: "not_found", session: null, revision: "0", turns: [], nextCursor: null } });
     if (path === "/api/state") return route.fulfill({ json: state });
     if (path.endsWith("/screen"))
       return route.fulfill({
@@ -111,6 +112,7 @@ async function setup(page: Page) {
   await page
     .getByRole("button", { name: "Yes, proceed", exact: true })
     .waitFor();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   await page.evaluate(() => document.fonts.ready);
   return {
     writes,
@@ -121,7 +123,7 @@ async function setup(page: Page) {
   };
 }
 
-test("Read is one tap away and fits a 200-column screen without horizontal page scroll", async ({
+test("Read is one tap away inside terminal view and fits a 200-column screen without horizontal page scroll", async ({
   page,
 }) => {
   await setup(page);
@@ -380,7 +382,7 @@ test.describe("screen scrolling", () => {
   });
 });
 
-test("Mirror is the default, fits the phone width and permits browser pinch zoom", async ({
+test("Mirror is the initial terminal subview, fits the phone width and permits browser pinch zoom", async ({
   page,
 }) => {
   const { writes } = await setup(page);
@@ -510,12 +512,16 @@ test("terminal view choice survives reloads on this device", async ({ page }) =>
     .tap();
   await expect(viewport).toHaveAttribute("data-view", "read");
   await page.reload();
+  await expect(page.locator(".conversation")).toBeVisible();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   await expect(viewport).toHaveAttribute("data-view", "read");
   await expect(page.locator(".terminal-read")).toBeVisible();
   await page
     .getByRole("button", { name: "Show desktop mirror", exact: true })
     .tap();
   await page.reload();
+  await expect(page.locator(".conversation")).toBeVisible();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   await expect(viewport).toHaveAttribute("data-view", "mirror");
   await expect(page.locator(".terminal-canvas")).toBeVisible();
 });

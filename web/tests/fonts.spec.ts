@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 const terminal = { id: "t1", title: "Build", state: "live", status: "idle", cols: 56, rows: 37 };
 const state = { version: 1, revision: 1, machines: [{ id: "local", name: "This computer", online: true }], programs: [], spaces: [{ id: "sample", machineId: "local", name: "Sample", cwd: "", repo: null, branch: null, color: "#22a99a", tabs: [{ id: "build", name: "Build", terminals: [terminal] }] }] };
-async function setup(page: Page, stream: boolean, history = false) {
+async function setup(page: Page, stream: boolean, history = false, enterTerminal = true) {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   let held = 0, abort = false;
@@ -17,10 +17,12 @@ async function setup(page: Page, stream: boolean, history = false) {
   });
   await page.route("**/api/**", route => {
     requests.push(route.request().method() + " " + new URL(route.request().url()).pathname);
+    if (route.request().url().endsWith("/conversation")) return route.fulfill({ json: { available: false, reason: "not_found", session: null, revision: "0", turns: [], nextCursor: null } });
     return route.fulfill({ json: route.request().url().endsWith("/state") ? state : { terminal, text: "WWWWiiiiMMMM Readable terminal\nSaved output remains in place", screenId: "screen", prompt: null, complete: true } });
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "S Sample", exact: true }).tap();
+  if (enterTerminal) await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   return { release, fail: () => { abort = true; release(); }, requests, held: () => held };
 }
 async function metrics(page: Page) {
@@ -53,6 +55,7 @@ for (const stream of [false, true]) test(`held font measures first ${stream ? "s
   if (process.env.FONT_SHOT) await page.screenshot({ path: process.env.FONT_SHOT.replace(".png", stream ? "-stream.png" : "-fallback.png") });
   await page.getByRole("button", { name: "‹", exact: true }).tap();
   await page.getByRole("button", { name: "S Sample", exact: true }).tap();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   await expect(page.locator(".terminal-canvas:not(.observer-staging) .xterm-rows")).toContainText("Readable terminal");
   const reopened = await metrics(page);
   expect(Math.abs(first.cell - reopened.cell)).toBeLessThan(0.02);
@@ -130,13 +133,13 @@ test("failed font requests keep fallback usable without an unhandled rejection",
 });
 
 test("font arriving during Conversation is measured again when Mirror returns", async ({ page }) => {
-  const mock = await setup(page, true);
+  const mock = await setup(page, true, false, false);
   await expect.poll(mock.held).toBeGreaterThan(0);
   await expect(page.locator(".terminal-canvas:not(.observer-staging) .xterm-rows")).toContainText("Readable terminal", { timeout: 4000 });
-  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  await expect(page.locator(".conversation")).toBeVisible();
   mock.release();
   await page.evaluate(() => document.fonts.ready);
-  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   await expect(page.locator(".terminal-canvas:not(.observer-staging) .xterm-rows")).toContainText("Readable terminal");
   const after = await metrics(page);
   expect(Math.abs(after.cell - after.glyph)).toBeLessThan(0.04);
