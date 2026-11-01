@@ -16,7 +16,8 @@ iPhone (home-screen app) --HTTPS over Tailscale--> bridge on the PC --hc connect
 - **Notifications.** Web Push, already proven on your phone. The bridge follows `events.subscribe` and pings you when an agent is blocked waiting on you or finishes a turn. Tap the notification to open that agent.
 
 ## What it does (v1): his spec, 2026-10-31
-Keep it simple but effective. Reference: `home-reference.png` (the Herdr app's Spaces sidebar).
+Keep it simple but effective. Reference: the Herdr app's Spaces sidebar. A
+public-safe [home preview](docs/screens/home-webkit.png) uses neutral sample spaces.
 1. **Home is the Herdr Spaces sidebar.** It has the "Spaces" header, then groups for "This computer" and "mac", each with its online dot. Every space has its coloured letter tile, its name, and a subtitle with the repo and branch. Herdr's own colours, fonts and spacing.
 2. **The + buttons work.** The + next to a machine opens a new space on that machine. The + at the top opens a new space too.
 3. **Tap a space and its first tab opens,** with the other tabs across the top. Tap a tab to switch.
@@ -39,7 +40,7 @@ Keep it simple but effective. Reference: `home-reference.png` (the Herdr app's S
 ## Build plan
 | Phase | What | Done when |
 |---|---|---|
-| 0. Look | Settled: the Herdr Spaces sidebar (`home-reference.png`). | Done 2026-10-31. |
+| 0. Look | Settled: the Herdr Spaces sidebar. | Done 2026-10-31. |
 | 1. Bridge | Talks to `hc connect`, lists agents on both machines, pairing, tokens, `tailscale serve`. | It lists your real agents on the PC and Mac. |
 | 2. Core screens | Home (spec 1–2), space with tabs and the live terminal (3–4), key bar (5), Yes/No buttons (6), slash menus (7). | You talk to an agent from the phone, approve something, and change /model. |
 | 3. Push | Lock-screen notifications. | A blocked agent pings your phone and you answer it in two taps. |
