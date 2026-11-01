@@ -1,3 +1,4 @@
+import { transcriptSource, type TranscriptSource } from "./conversation";
 import { createHash } from "node:crypto";
 import { resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
@@ -94,6 +95,7 @@ export function start(
     staticDir?: string;
     pushTransport?: PushTransport;
     observerFactory?: ObserverFactory;
+    transcriptSource?: TranscriptSource;
   } = {},
 ) {
   const port = options.port ?? Number(process.env.HERDR_PHONE_PORT || 8790);
@@ -106,6 +108,7 @@ export function start(
   const core = options.core || new Core(),
     store = options.store || new Store(),
     state = new Snapshot(core);
+  const conversations = options.transcriptSource ?? transcriptSource(core);
   const push = new Push(store, origin, options.pushTransport);
   const sockets = new Set<any>(),
     queues = new Map<string, Promise<any>>();
@@ -297,7 +300,7 @@ export function start(
         const requestOrigin = req.headers.get("origin");
         if (requestOrigin && requestOrigin !== origin)
           throw new Failure(401, "origin_rejected", "Origin rejected.");
-        if (path.startsWith("/api/") && url.search) throw invalid();
+        if (path.startsWith("/api/") && url.search && !/^\/api\/terminals\/[^/]+\/conversation$/.test(path)) throw invalid();
         if (path === "/api/health" && req.method === "GET") {
           try {
             await core.call("hello", { generation: 1 });
@@ -380,7 +383,7 @@ export function start(
             return json(result, 201);
           }
           const match = path.match(
-            /^\/api\/terminals\/([^/]+)\/(screen|keys|send|prompt)$/,
+            /^\/api\/terminals\/([^/]+)\/(screen|keys|send|prompt|conversation)$/,
           );
           if (match) {
             let id;
@@ -391,9 +394,15 @@ export function start(
             }
             if (!/^(?:[A-Za-z0-9_.-]+\/)?t[a-zA-Z0-9]+$/.test(id))
               throw invalid();
+            if (match[2] === "conversation" && req.method === "GET") {
+              if ([...url.searchParams.keys()].some(k => k !== "before") || url.searchParams.getAll("before").length > 1) throw invalid();
+              const result = await conversations(id, url.searchParams.get("before") ?? undefined);
+              await auth(req);
+              return json(result);
+            }
             if (match[2] === "screen" && req.method === "GET")
               return json(await screen(id));
-            if (req.method === "POST" && match[2] !== "screen") {
+            if (req.method === "POST" && !["screen", "conversation"].includes(match[2])) {
               const b = await body(req);
               if (match[2] === "prompt") {
                 if (
