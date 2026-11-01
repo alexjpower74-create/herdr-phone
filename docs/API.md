@@ -98,7 +98,12 @@ The bridge reads each core's `herdr-app` document through `doc.get`, and joins
 its terminal ids with `terminal.list`/`events.subscribe`. Remote addresses
 remain qualified throughout. Include empty spaces; exclude temporary machines.
 Offline machines retain their last known spaces with `online: false`.
-Missing repo/branch information is null, never fabricated. Cache metadata so
+Resolve the subtitle from the first live terminal's current directory (fall
+back to the saved space folder). For linked worktrees, use the shared Git
+directory to identify the parent repository and the worktree's current branch.
+Map the desktop's stored color name through its avatar palette; a valid
+explicit hex color remains valid. Missing repo/branch information is null,
+never fabricated. Cache metadata so
 opening home is not blocked on repeated subprocess or repository scans.
 Read program ids and display names from the installed app's `programs.json`;
 never send launch arguments to the phone.
@@ -106,37 +111,78 @@ never send launch arguments to the phone.
 ## Terminal display and input
 
 `GET /api/terminals/:id/screen` returns `{ "terminal": Terminal, "text":
-"<screen>", "complete": true }`. Encode the entire id with
+"<screen>", "complete": true, "screenId": "<digest>", "prompt": Prompt | null }`.
+The digest binds the terminal, current screen and reported status/turn.
+Encode the entire id with
 `encodeURIComponent`, including its remote slash. Read with history zero;
 never scroll a live application to obtain history.
 
 `POST /api/terminals/:id/keys`, body `{ "keys": ["shift+tab"] }`, returns
 `{ "ok": true }` after core acknowledgement. Supported bar names are
-`shift+tab`, `esc`, `up`, `down`, `enter`, `ctrl+c`; individual printable
-Unicode characters and `backspace`, `tab`, `left`, `right`, `delete`, `home`,
-`end` are also accepted. Validate the array and bound each request.
+`shift+tab`, `esc`, `up`, `down`, `enter`, `ctrl+c`; `backspace`, `tab`,
+`left`, `right`, `delete`, `home`, `end`, ASCII letters and digits are also
+accepted for menu navigation. Uppercase letters map to shifted letter keys.
+Validate and bound the entire request before sending any keys. Arbitrary
+literal text does not use this endpoint.
 
-`POST /api/terminals/:id/input`, body `{ "text": "hello" }`, types literal
-text without implicit Enter, using the core's named-key API with one Unicode
-character per key. Translate CR/LF, tab, escape, backspace and control-C
-explicitly. Reject unknown control sequences. The bridge serializes input
-per terminal. Clients await acknowledgements and never replay unacknowledged
-input automatically after a disconnect. Keep one terminal's input associated
-with that terminal when switching tabs. Request text is at most 4096 bytes.
+`POST /api/terminals/:id/send`, body `{ "text": "hello" }`, submits a complete
+message through `terminal.send`, which pastes the literal text then presses
+Enter. Spaces, punctuation, Unicode and multiline text are preserved. Reject
+empty input, invalid Unicode, NUL and unexpected control characters; allow
+line breaks and tabs. The UTF-8 text limit is 4096 bytes.
 
-`POST /api/terminals/:id/send`, body `{ "text": "hello" }`, is an optional
-complete-message action using `terminal.send` (which includes Enter). It
-must not force past a blocked state. Interactive typing uses `/input` and
-`/keys`, so menus and explicit approval choices remain usable.
+The phone keeps each terminal's draft locally until the person presses Send
+or Enter. The key-bar Enter submits a nonempty draft; with an empty draft it
+sends the named Enter key to the terminal. Composition never sends individual
+keystrokes. Commands such as `/model`, `/effort` and `/mcp` use the same send
+path, then their menus use the key bar or detected menu options. The former
+`/input` route is removed and returns 404.
 
-Installed-core limitation: the current named-key parser accepts a subset of
-ASCII. Spaces use the `space` alias and uppercase letters use `shift+letter`.
-It cannot preserve the shifted punctuation `!"#$%&()*+:<>?@^_{|}~` or non-ASCII
-characters. Until a safe literal-text transport is available, `/input` and
-printable `/keys` reject a request containing any unsupported character with
-400 `unsupported_input`, before writing any part of it. The key bar is supported.
-Arbitrary literal typing remains blocked; the intended literal-input contract
-above is not yet fully implemented.
+The bridge serializes send, keys and prompt actions per terminal. Clients
+await acknowledgements, prevent duplicate submission, keep a pending send
+associated with its original terminal, and never automatically replay an
+unacknowledged request. Preserve the draft on failure and explain an unknown
+delivery outcome after disconnection; clear it only when acknowledged and
+only if the person has not since edited it.
+
+Default sends always omit `force` or set it false. A blocked terminal returns
+409 `terminal_blocked`. The phone keeps the draft and offers an explicit
+confirmation showing the current dialog. Only a separate deliberate
+"Send anyway" action submits `{ "text", "force": true, "screenId" }`.
+Immediately before dispatch, the bridge verifies the terminal is still blocked
+and the screen digest still matches; otherwise return 409 `stale_prompt`.
+Never turn a rejected ordinary send into a forced retry automatically.
+
+## Prompt detection and choices
+
+The bridge detects prompts from the current history-zero screen and reported
+status. The client renders the supplied choices and does not parse terminal
+text. Home state does not read every terminal screen to discover prompts.
+
+```ts
+type Prompt = {
+  id: string; // screen-bound digest; changes with the active dialog
+  kind: "approval" | "menu";
+  options: { id: string; label: string; keys: string[] }[];
+};
+```
+
+Approval detection requires a currently blocked terminal and a recognized
+active approval block at the end of the screen. Menu detection requires a
+recognized active command menu, including its selection marker and navigation
+instructions. Unknown, truncated, historical or ambiguous text yields null;
+the key bar remains available. Preserve the actual option labels, including
+the scope of any remembered permission; never reduce them to a misleading Yes.
+Tests use sanitized real screen structures from both supported terminal UIs,
+plus ordinary numbered output and dismissed/stale prompts as negative cases.
+Private originals and provenance stay outside the published tree.
+
+`POST /api/terminals/:id/prompt`, body `{ "promptId", "optionId" }`, rereads
+the current screen/status inside that terminal's input queue, detects it again,
+and sends only the keys for that current option. Return `{ "ok": true }` on
+acknowledgement; 409 `stale_prompt` if it changed or disappeared. Do not accept
+client-supplied replacement labels or keys on this route. No prompt is acted
+on without a deliberate tap.
 
 No resize endpoint exists. The client sets its own emulator to the desktop
 cols/rows and scales the rendered terminal to the available width. Use
@@ -158,7 +204,7 @@ causes a fresh full snapshot, not partial state presented as current.
 
 Client: `{ "type": "watch", "terminalId": "t1" }` subscribes to one
 terminal, releasing any previous stream. `{ "type": "unwatch" }` releases it.
-Server: `{ "type": "screen", "terminalId", "cols", "rows", "text" }`
+Server: `{ "type": "screen", "terminalId", "cols", "rows", "text", "screenId", "prompt" }`
 is a complete plain-text replacement. When safe observer streams are available,
 server instead sends `{ "type": "output", "terminalId", "cols", "rows",
 "reset": true, "data": "<base64 ANSI bytes>" }` followed by messages with
@@ -199,8 +245,11 @@ private and arbitrary destinations to prevent server-side request forgery.
 Follow core status/turn events. Notify on entry into blocked and on a completed
 turn, once per terminal/turn/type. Initial snapshots and reconnection must not
 re-notify old states. Notification payload: `{ "title": "Herdr", "body":
-"A terminal needs you", "tag": "<terminal/turn/kind>", "url":
-"/#terminal=<encoded-id>" }`. Keep terminal contents out of lock-screen text.
+"<space / tab> needs you", "tag": "<terminal/turn/kind>", "url":
+"/#terminal=<encoded-id>" }`. For a finished turn, use "<space / tab> finished".
+Names come from the layout, never terminal contents or terminal titles. Avoid
+duplicating identical space/tab names; fall back to "A terminal" if unnamed.
+Keep terminal contents out of lock-screen text.
 Persist VAPID keys privately; discard expired subscriptions on 404/410.
 
 ## Verification boundary
