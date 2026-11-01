@@ -1,4 +1,4 @@
-import { ApiError, type Client } from "./client";
+import { ApiError, NetworkError, type Client } from "./client";
 import type { ConversationPage } from "./types";
 
 /** Saved messages have their own lifetime and never request terminal history. */
@@ -103,6 +103,10 @@ export class Conversation {
     this.status.textContent = message;
     this.retry.hidden = false;
   }
+  private turnNode(turn: ConversationPage["turns"][number]) {
+    return this.nodes.get(turn.id) ?? [...new Set(this.nodes.values())].find(node =>
+      [...node.children].some(row => turn.entries.some(entry => entry.id === (row as HTMLElement).dataset.entry)));
+  }
   private async load(older = false) {
     if (!this.visible || document.hidden) return;
     if (older && (!this.cursor || this.loadingOlder)) return;
@@ -134,7 +138,7 @@ export class Conversation {
       }
       const reset = !this.initialized || page.session !== this.session ||
         (!older && this.nodes.size > 0 &&
-          !page.turns.some(turn => this.nodes.has(turn.id)));
+          !page.turns.some(turn => this.turnNode(turn)));
       if (reset) {
         this.cancel();
         this.nodes.clear(); this.list.replaceChildren(); this.session = page.session;
@@ -145,25 +149,43 @@ export class Conversation {
       const offset = anchor?.getBoundingClientRect().top;
       const fragment = document.createDocumentFragment();
       for (const turn of page.turns) {
-        let node = this.nodes.get(turn.id);
+        let node = this.turnNode(turn);
         if (!node) {
           node = document.createElement("article"); node.dataset.turn = turn.id;
           this.nodes.set(turn.id, node); fragment.append(node);
         }
-        // Reconcile entries within the changed turn, retaining all other DOM and selection.
+        // Keep aliases while an older cursor still carries the previous fragment ID.
+        this.nodes.set(turn.id, node);
+        // Older windows contribute a prefix; their snapshots never overwrite newer rows.
         const entries = new Map([...node.children].map(el => [(el as HTMLElement).dataset.entry, el as HTMLElement]));
         const keep = new Set<string>();
-        for (const entry of turn.entries) {
+        const prefix = document.createDocumentFragment();
+        if (!older && turn.continuesPrevious) {
+          for (const [id] of entries) {
+            if (turn.entries.some(entry => entry.id === id)) break;
+            keep.add(id!);
+          }
+        }
+        for (const [index, entry] of turn.entries.entries()) {
           keep.add(entry.id);
           let row = entries.get(entry.id);
-          if (!row) { row = document.createElement("div"); row.dataset.entry = entry.id; node.append(row); }
+          if (older && row) continue;
+          if (!row) {
+            row = document.createElement("div"); row.dataset.entry = entry.id;
+            if (older) prefix.append(row);
+            else {
+              const next = turn.entries.slice(index + 1).map(entry => entries.get(entry.id)).find(Boolean);
+              node.insertBefore(row, next ?? null);
+            }
+          }
           row.className = `conversation-entry conversation-${entry.role}`;
           row.dataset.role = entry.role;
           if (entry.role === "tool") { row.setAttribute("aria-label", "Tool summary"); row.dataset.collapsed = "true"; }
           const text = entry.role === "tool" ? entry.text.split(/\r?\n/)[0] : entry.text;
           if (row.textContent !== text) row.textContent = text;
         }
-        for (const [id, row] of entries) if (!keep.has(id!)) row.remove();
+        if (older) node.prepend(prefix);
+        else for (const [id, row] of entries) if (!keep.has(id!)) row.remove();
       }
       if (older) this.list.prepend(fragment); else this.list.append(fragment);
       if (reset || older) this.cursor = page.nextCursor;
@@ -198,7 +220,7 @@ export class Conversation {
           conversation_unavailable: "The saved conversation reader is unavailable. Please retry.",
         };
         this.failure(error instanceof ApiError ? failures[error.code] ?? "Could not load saved conversation. Please retry." :
-          error instanceof TypeError ? "Could not reach the bridge. Check your connection and retry." :
+          error instanceof NetworkError ? "Could not reach the bridge. Check your connection and retry." :
           "Could not load saved conversation. Please retry.");
       }
     } finally {

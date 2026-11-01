@@ -1,5 +1,6 @@
 import type { Frame, State, Screen, ConversationPage, UploadedFile } from "./types";
 const TOKEN_KEY = "herdr-phone.device";
+export class NetworkError extends Error {}
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -40,6 +41,9 @@ export class Client {
         ...(body !== undefined && !multipart ? { "Content-Type": "application/json" } : {}),
       },
       body: multipart ? body : body === undefined ? undefined : JSON.stringify(body),
+    }).catch(error => {
+      if (signal?.aborted) throw error;
+      throw new NetworkError("Could not reach the bridge.");
     });
     if (!response.ok) {
       const data = await response.json().catch(() => null);
