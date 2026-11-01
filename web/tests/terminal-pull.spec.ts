@@ -131,7 +131,7 @@ test('touch beginning in scrollback cannot hand off after reaching the top', asy
   expect(await page.evaluate(() => (window as any).touchMoves.every((v: boolean) => !v))).toBe(true);
 });
 
-for (const change of ['view', 'terminal', 'disconnect', 'hidden']) test(`${change} change cancels held pull`, async ({ page }) => {
+for (const change of ['view', 'terminal', 'disconnect', 'core-reconnect', 'hidden']) test(`${change} change cancels held pull`, async ({ page }) => {
   const { x, y, model } = await start(page);
   if (change === 'view') await page.getByRole('button', { name: 'Show readable text' }).focus();
   if (change === 'terminal') await page.getByRole('button', { name: 'Review', exact: true }).focus();
@@ -147,11 +147,26 @@ for (const change of ['view', 'terminal', 'disconnect', 'hidden']) test(`${chang
     for (const ws of model.sockets) ws.close();
     await expect(page.getByText(/Connection lost/)).toBeVisible();
   }
+  if (change === 'core-reconnect') {
+    model.sockets.at(-1)!.send(JSON.stringify({ type: 'connection', connected: false }));
+    await expect(page.getByText(/Connection lost/)).toBeVisible();
+    model.sockets.at(-1)!.send(JSON.stringify({ type: 'connection', connected: true }));
+    await expect(page.locator('.terminal-input')).toBeEnabled();
+  }
   if (change === 'hidden') await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
     document.dispatchEvent(new Event('visibilitychange'));
     Object.defineProperty(document, 'hidden', { configurable: true, value: false });
   });
   await touch(page, 'touchEnd', [{ id: 1, x, y: y + 100 }]);
+  await expect(page.locator('.terminal-viewport')).toBeVisible();
+});
+
+test('consumed short pull suppresses compatibility click and textarea focus', async ({ page }) => {
+  const { x, y } = await start(page);
+  await page.locator('.terminal-input').blur();
+  await drag(page, x, y, 0, 25);
+  await page.mouse.click(x, y + 25);
+  await expect(page.locator('.terminal-input')).not.toBeFocused();
   await expect(page.locator('.terminal-viewport')).toBeVisible();
 });
