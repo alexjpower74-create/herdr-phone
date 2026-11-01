@@ -270,10 +270,23 @@ finally:
   check("busy Read changes without full replacement for 5 seconds", mutations.mutations > 0 && mutations.replaced === 0, mutations);
   await page.screenshot({ path: join(directory, `terminal-busy-${label}-webkit.png`) });
 
+  // Print before subscribing: the page must fetch retained history, not merely
+  // keep the 3000 lines as they arrive on an already-open observer.
+  await page.goto("about:blank");
   await command("history");
-  await page.waitForTimeout(1000);
   for (const view of ["mirror", "read"] as const) {
+    await page.goto(`${origin}/#terminal=${encodeURIComponent(terminalId!)}`);
+    await page.locator(".terminal-viewport").waitFor();
+    if (!baseline) await eventually(async () => {
+      const snapshot = await inspect(page);
+      return snapshot?.observer && snapshot.rows.some((r: any) => /^LINE 3000 /.test(r.text));
+    }, "Initial retained-history replay did not arrive");
     await choose(page, view);
+    const initialHistory = await inspect(page);
+    if (!baseline) {
+      assert.equal(initialHistory.history, 500, "Initial load must request 500 rows");
+      assert(initialHistory.rows.filter((r: any) => /^LINE /.test(r.text)).length < 1000, "Initial proof bypassed pagination");
+    }
     for (let attempt = 0; attempt < 10; attempt++) {
       const snapshot = await inspect(page);
       if (snapshot?.rows.some((r: any) => /^LINE 0001 /.test(r.text))) break;
@@ -288,6 +301,7 @@ finally:
       { count: ids.length, first: ids[0], last: ids.at(-1), history: snapshot?.history, stopped: snapshot?.historyStopped });
     await scrollTop(page);
     await page.screenshot({ path: join(directory, `terminal-history-${view}-${label}-webkit.png`) });
+    if (view === "mirror") await page.goto("about:blank");
   }
   await command("spinner");
   const oldWatch = (await inspect(page))?.watchId;
