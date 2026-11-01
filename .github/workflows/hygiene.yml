@@ -9,3 +9,12 @@ jobs:
         run: tools/check-no-personal-data --self-test
       - name: No personal data
         run: tools/check-no-personal-data
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Bridge checks
+        run: bun test server
