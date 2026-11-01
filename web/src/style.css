@@ -285,6 +285,8 @@ h2 {
   padding: 10px 12px;
   flex: none;
 }
+.terminal-history-hint { display: block; }
+.terminal-history-hint[hidden] { display: none; }
 .terminal-viewport {
   flex: 1 1 80px;
   min-height: 0;
