@@ -50,13 +50,13 @@ for (const stream of [false, true]) test(`held font measures first ${stream ? "s
   expect(Math.abs(first.spacing)).toBeLessThan(0.04);
   expect(premature).toBe(0);
   expect(first.width).toBeLessThanOrEqual(366);
+  if (process.env.FONT_SHOT) await page.screenshot({ path: process.env.FONT_SHOT.replace(".png", stream ? "-stream.png" : "-fallback.png") });
   await page.getByRole("button", { name: "‹", exact: true }).tap();
   await page.getByRole("button", { name: "S Sample", exact: true }).tap();
   await expect(page.locator(".terminal-canvas:not(.observer-staging) .xterm-rows")).toContainText("Readable terminal");
   const reopened = await metrics(page);
   expect(Math.abs(first.cell - reopened.cell)).toBeLessThan(0.02);
   expect(mock.requests.every(request => request.startsWith("GET "))).toBe(true);
-  if (process.env.FONT_SHOT) await page.screenshot({ path: process.env.FONT_SHOT.replace(".png", stream ? "-stream.png" : "-fallback.png") });
 });
 
 test("leaving a terminal while fonts wait cancels its eventual open", async ({ page }) => {
