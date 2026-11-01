@@ -325,6 +325,18 @@ test.describe("screen scrolling", () => {
     } finally {
       await page.evaluate(() => (window as any).releaseScrollProbe());
     }
+    const paused = await settledPosition(viewport);
+    await page
+      .getByRole("button", { name: "Show desktop mirror", exact: true })
+      .tap();
+    mock.update(wideScreen.trimEnd() + "\nUpdate while mirroring.");
+    await page
+      .getByRole("button", { name: "Show readable text", exact: true })
+      .tap();
+    await expect(read).toContainText("Update while mirroring.");
+    expect(Math.abs((await settledPosition(viewport)) - paused)).toBeLessThan(
+      3,
+    );
   });
 });
 

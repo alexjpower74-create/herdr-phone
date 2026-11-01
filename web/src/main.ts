@@ -323,19 +323,9 @@ function showTerminal(desired?: string) {
   const read = element("div", "terminal-read");
   read.setAttribute("aria-label", "Readable terminal text");
   viewport.append(canvas, read);
-  viewport.addEventListener(
-    "scroll",
-    () => {
-      if (terminalView !== "read") return;
-      const nextPosition = viewport.scrollTop;
-      const atBottom =
-        viewport.scrollHeight - nextPosition - viewport.clientHeight < 32;
-      if (atBottom) followingNewest = true;
-      else if (nextPosition < readPosition - 1) followingNewest = false;
-      readPosition = nextPosition;
-    },
-    { passive: true },
-  );
+  viewport.addEventListener("scroll", () => captureReadPosition(viewport), {
+    passive: true,
+  });
   root.append(viewport);
   const approvals = element("div", "approvals");
   approvals.id = "approvals";
@@ -408,8 +398,13 @@ function showTerminal(desired?: string) {
   viewport.onclick = () => input.focus();
   resize = new ResizeObserver(() => {
     scaleTerminal();
-    if (terminalView === "read" && followingNewest)
-      viewport.scrollTop = viewport.scrollHeight;
+    if (terminalView === "read") {
+      captureReadPosition(viewport);
+      if (followingNewest) {
+        viewport.scrollTop = viewport.scrollHeight;
+        readPosition = viewport.scrollTop;
+      }
+    }
   });
   resize.observe(viewport);
   resize.observe(read);
@@ -454,15 +449,26 @@ function setTerminalView(view: TerminalView) {
   );
   toggle.setAttribute("aria-pressed", String(view === "mirror"));
   if (view === "read") {
-    paintReadable();
+    // Restore the Read position, not the unrelated Mirror scroll offset.
+    paintReadable(false);
     viewport.scrollTop = followingNewest ? viewport.scrollHeight : readPosition;
+    readPosition = viewport.scrollTop;
   } else {
     viewport.scrollTop = 0;
     emulator?.refresh(0, emulator.rows - 1);
     scaleTerminal();
   }
 }
-function paintReadable() {
+function captureReadPosition(viewport: HTMLElement) {
+  if (terminalView !== "read") return;
+  const position = viewport.scrollTop;
+  const atBottom =
+    viewport.scrollHeight - position - viewport.clientHeight < 32;
+  if (atBottom) followingNewest = true;
+  else if (position < readPosition - 1) followingNewest = false;
+  readPosition = position;
+}
+function paintReadable(capturePosition = true) {
   const read = root.querySelector<HTMLElement>(".terminal-read"),
     viewport = root.querySelector<HTMLElement>(".terminal-viewport");
   if (
@@ -473,7 +479,6 @@ function paintReadable() {
   )
     return;
   readSource = currentText;
-  const position = readPosition;
   const content = document.createDocumentFragment();
   for (const line of readableLines(currentText)) {
     content.append(
@@ -482,8 +487,14 @@ function paintReadable() {
         : element("div", "read-line", line.text),
     );
   }
+  // Native scrolling can advance before its scroll event is delivered. Read
+  // the live position immediately before replacing content, not from its last
+  // callback or before building the next frame.
+  if (capturePosition) captureReadPosition(viewport);
+  const position = readPosition;
   read.replaceChildren(content);
   viewport.scrollTop = followingNewest ? viewport.scrollHeight : position;
+  readPosition = viewport.scrollTop;
 }
 function updateTerminalInfo() {
   const info = document.querySelector("#terminal-info");
