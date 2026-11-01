@@ -1,0 +1,8 @@
+{"type":"user","uuid":"u1","sessionId":"sample-session","cwd":"/work/sample","message":{"role":"user","content":"First question"}}
+{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"thinking","thinking":"PRIVATE_REASONING"},{"type":"text","text":"First reply"},{"type":"tool_use","id":"tool1","name":"read_file","input":{"secret":"PRIVATE_ARGUMENT"}}]}}
+{"type":"user","uuid":"result1","message":{"role":"user","content":[{"type":"tool_result","content":"PRIVATE_OUTPUT"}]}}
+{"type":"api-request-blob","message":{"role":"assistant","content":[{"type":"text","text":"PRIVATE_COPY"}]}}
+{"type":"user","uuid":"summary","isCompactSummary":true,"message":{"role":"user","content":"PRIVATE_SUMMARY"}}
+{"type":"system","message":{"role":"system","content":"PRIVATE_INSTRUCTIONS"}}
+{"type":"user","uuid":"u2","message":{"role":"user","content":[{"type":"text","text":"Second question"},{"type":"text","text":"Extra paragraph"}]}}
+{"type":"assistant","uuid":"a2","message":{"role":"assistant","content":[{"type":"text","text":"Second reply"}]}}
