@@ -154,8 +154,8 @@ test("Conversation follows layout changes but preserves native scroll-up before 
   });
   publishPrompt({ id: "small", kind: "menu", options: [{ id: "keep", label: "Keep current setting", keys: ["enter"] }] });
   await expect(page.getByRole("button", { name: "Keep current setting", exact: true })).toBeVisible();
-  expect(Math.abs(await host.evaluate(el => el.scrollTop) - prior)).toBeLessThan(2);
   await expect(host.getByRole("button", { name: "Latest messages" })).toBeVisible();
+  expect(Math.abs(await host.evaluate(el => el.scrollTop) - prior)).toBeLessThan(2);
 });
 
 test("unavailable preference storage still opens Conversation and permits terminal access", async ({ page }) => {
