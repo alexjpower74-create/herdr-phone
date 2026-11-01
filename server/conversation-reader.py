@@ -71,9 +71,13 @@ def descriptors(pid):
 
 def header(path,fmt):
     with open(path,'rb') as f:
-        for _ in range(100):
-            line=f.readline(MAX_LINE+1)
-            if len(line)>MAX_LINE: raise Problem('discovery')
+        budget=MAX_WINDOW; dropping=False
+        while budget:
+            line=f.readline(min(MAX_LINE+1,budget)); budget-=len(line)
+            if not line: break
+            if dropping or len(line)>MAX_LINE:
+                dropping=not line.endswith(b'\n')
+                continue
             if not line.endswith(b'\n'): break
             try: r=json.loads(line)
             except (ValueError,UnicodeError): raise Problem('invalid')
@@ -150,7 +154,7 @@ def guard(f, size, boundary):
     # Small fixed guards detect edits at both snapshot ends and the paging seam.
     spans=[]
     for point in (0, size, boundary):
-        start=max(0,point-256); end=min(size,point+256)
+        start=max(0,point-4096); end=min(size,point+4096)
         f.seek(start); spans.append([start,end,hashlib.sha256(f.read(end-start)).hexdigest()])
     return spans
 
@@ -160,11 +164,11 @@ def read(req):
         st=os.fstat(f.fileno())
         if not stat.S_ISREG(st.st_mode): raise Problem('invalid')
         fingerprint=list(map(str,[st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns]))
-        binding=hashlib.sha256(json.dumps([identity(rootproc),identity(proc),path,fmt,sid,st.st_dev,st.st_ino]).encode()).hexdigest()
+        binding=hashlib.sha256(json.dumps([identity(rootproc),identity(proc),path,fmt,sid,st.st_dev,st.st_ino,req.get('terminal')]).encode()).hexdigest()
         expected=req.get('expected'); before=req.get('before')
         if expected:
             if expected['binding']!=binding or st.st_size<expected['size']: raise Problem('changed')
-            if st.st_size==expected['size'] and fingerprint!=expected['fingerprint']: raise Problem('changed')
+            if st.st_size==int(expected['fingerprint'][2]) and fingerprint!=expected['fingerprint']: raise Problem('changed')
             for start,end,digest in expected['guards']:
                 f.seek(start)
                 if hashlib.sha256(f.read(end-start)).hexdigest()!=digest: raise Problem('changed')
@@ -206,11 +210,11 @@ def read(req):
                 if used and used+cost>MAX_OUTPUT: break
                 if closed>=50: break
                 kept=[]
-                for role,text,key in fresh:
-                    raw=text.encode(); remaining=MAX_OUTPUT-used
+                for index,(role,text,key) in enumerate(fresh):
+                    raw=text.encode(); remaining=(MAX_OUTPUT-used)//(len(fresh)-index)
                     if len(raw)>remaining or len(raw)>MAX_OUTPUT-64:
                         limit=max(0,min(remaining-32,MAX_OUTPUT-64))
-                        text=raw[:limit].decode('utf-8','ignore')+'\n[long output trimmed]'
+                        text=(raw[:limit].decode('utf-8','ignore')+'\n[long output trimmed]') if remaining>=32 else ''
                         warnings.add('long_output_trimmed')
                     if len(text.encode())>remaining: break
                     used+=len(text.encode()); seen.add(key)
@@ -235,7 +239,7 @@ def read(req):
             guards=guard(f,size,boundary)
             result={'binding':binding,'fingerprint':fingerprint,'size':size,'guards':guards,
                     'digest':hashlib.sha256(json.dumps([fingerprint,guards]).encode()).hexdigest(),
-                    'turns':groups,'next':boundary if boundary>0 else None,'join':next_join,'warnings':sorted(warnings)}
+                    'scanned':len(data),'outputBytes':used,'turns':groups,'next':boundary if boundary>0 else None,'join':next_join,'warnings':sorted(warnings)}
         after=os.stat(path)
         if (after.st_dev,after.st_ino)!=(st.st_dev,st.st_ino) or after.st_size<st.st_size: raise Problem('changed')
         if after.st_size==st.st_size and (after.st_mtime_ns,after.st_ctime_ns)!=(st.st_mtime_ns,st.st_ctime_ns): raise Problem('changed')

@@ -246,7 +246,9 @@ for (const format of ["messages", "responses"] as const) {
 test("scan-only windows advance, skip giant records and recover earlier user", async () => {
   await fixture("responses", async ({ source, path }: any) => {
     // A complete giant private record is never decoded or exposed.
-    await appendFile(path, JSON.stringify({ type: "ignored", text: "z".repeat(18 * 1024 * 1024) }) + "\n");
+    await appendFile(path, '{"type":"ignored","text":"');
+    for (let n = 0; n < 24; n++) await appendFile(path, "z".repeat(1024 * 1024));
+    await appendFile(path, '"}\n');
     let page = await source("t1");
     expect(page.turns).toEqual([]);
     expect(page.warnings).toContain("scan_limited");
@@ -270,5 +272,97 @@ test("oversized displayed text trims while subsequent turns remain pageable", as
     expect(JSON.stringify(page.turns)).toContain("[long output trimmed]");
     expect(page.turns.at(-1).entries[0].text).toBe("Question 301");
     expect(page.nextCursor).not.toBeNull();
+  });
+});
+
+test("one oversized multipart record retains every entry identity within output budget", async () => {
+  await fixture("responses", async ({ source, path }: any) => {
+    await appendFile(path, JSON.stringify({ type: "response_item", payload: { type: "message", id: "multipart", role: "assistant", content: Array.from({ length: 3 }, (_, n) => ({ type: "output_text", text: `${n}:` + "m".repeat(900000) })) } }) + "\n");
+    const page = await source("t1");
+    expect(page.warnings).toContain("long_output_trimmed");
+    const entries = page.turns.flatMap((t: any) => t.entries);
+    expect(entries).toHaveLength(3);
+    expect(new Set(entries.map((e: any) => e.id)).size).toBe(3);
+    expect(entries.reduce((n: number, e: any) => n + Buffer.byteLength(e.text), 0)).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(entries.every((e: any) => e.text.includes("[long output trimmed]"))).toBe(true);
+  });
+});
+
+test("append guards reject rewritten prefix and cursors reject truncation", async () => {
+  await fixture("responses", async ({ source, path }: any) => {
+    await appendFile(path, Array.from({ length: 70 }, (_, n) => user(n)).join(""));
+    const first = await source("t1");
+    const original = await readFile(path, "utf8");
+    await writeFile(path, original.replace("First question", "Other question") + user(71));
+    await expect(source("t1", first.nextCursor)).rejects.toMatchObject({ code: "conversation_changed" });
+    const reset = await source("t1");
+    await writeFile(path, original.slice(0, original.length / 2));
+    await expect(source("t1", reset.nextCursor)).rejects.toMatchObject({ code: "conversation_changed" });
+  });
+});
+
+test("terminal incarnation is bound across separate cursor requests", async () => {
+  await fixture("responses", async ({ path, root, core }: any) => {
+    await appendFile(path, Array.from({ length: 70 }, (_, n) => user(n)).join(""));
+    let incarnation = 1;
+    const source = transcriptSource({ async call(method: string) { return { ...await core.call(method), created_ms: incarnation }; } }, join(root, "config.json"));
+    const first = await source("t1");
+    incarnation++;
+    await expect(source("t1", first.nextCursor!)).rejects.toMatchObject({ code: "conversation_changed" });
+    source.close?.();
+  });
+});
+
+test("latest bounded fragment retains session and overlapping entry IDs after append", async () => {
+  await fixture("responses", async ({ source, path }: any) => {
+    for (let n = 0; n < 12; n++) {
+      await appendFile(path, JSON.stringify({ type: "response_item", payload: { type: "message", id: `fragment-${n}`, role: "assistant", content: [{ type: "output_text", text: "q".repeat(700000) }] } }) + "\n");
+    }
+    const first = await source("t1");
+    await appendFile(path, reply("New small reply") + "\n");
+    const second = await source("t1");
+    expect(second.session).toBe(first.session);
+    expect(second.turns[0].continuesPrevious).toBe(true);
+    const oldIDs = new Set(first.turns.flatMap((t: any) => t.entries.map((e: any) => e.id)));
+    expect(second.turns[0].entries.some((e: any) => oldIDs.has(e.id))).toBe(true);
+    expect(second.turns[0].entries.at(-1).text).toBe("New small reply");
+  });
+});
+
+test("oversized header prelude is skipped without weakening verified session binding", async () => {
+  await fixture("responses", async ({ source, path }: any) => {
+    const original = await readFile(path, "utf8");
+    await writeFile(path, JSON.stringify({ type: "ignored", text: "x".repeat(4 * 1024 * 1024 + 1) }) + "\n" + original);
+    const page = await source("t1");
+    expect(page.available).toBe(true);
+    expect(page.turns[0].entries[0].text).toBe("First question");
+    expect(page.warnings).toContain("long_output_trimmed");
+  });
+});
+
+
+test("reader instruments scan and UTF-8 output budgets across empty giant windows", async () => {
+  await fixture("responses", async ({ root, path }: any) => {
+    await appendFile(path, '{"type":"ignored","text":"');
+    for (let n = 0; n < 24; n++) await appendFile(path, "x".repeat(1024 * 1024));
+    await appendFile(path, '"}\n' + user(500) + reply("字".repeat(900000)) + "\n");
+    const script = await readFile(new URL("conversation-reader.py", import.meta.url), "utf8");
+    let previous: any, found = false;
+    for (let count = 0; count < 10; count++) {
+      const request = { pid: process.pid, cwd: process.cwd(), sources: [{ format: "responses", root }],
+        ...(previous ? { expected: previous, before: previous.next, join: previous.join } : {}) };
+      const child = Bun.spawn(["python3", "-", Buffer.from(JSON.stringify(request)).toString("base64")], { stdin: new Blob([script]), stdout: "pipe", stderr: "ignore" });
+      const page = await new Response(child.stdout).json();
+      expect(await child.exited).toBe(0);
+      expect(page.error).toBeUndefined();
+      expect(page.scanned).toBeLessThanOrEqual(8 * 1024 * 1024);
+      expect(page.outputBytes).toBeLessThanOrEqual(2 * 1024 * 1024);
+      expect(page.outputBytes).toBe(page.turns.flatMap((t: any) => t.entries).reduce((n: number, e: any) => n + Buffer.byteLength(e.text), 0));
+      if (previous) expect(page.next ?? 0).toBeLessThan(previous.next);
+      found ||= page.turns.some((t: any) => t.entries.some((e: any) => e.text === "First question"));
+      if (page.next === null) break;
+      previous = page;
+    }
+    expect(found).toBe(true);
   });
 });
