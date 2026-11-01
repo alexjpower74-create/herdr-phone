@@ -494,7 +494,9 @@ async function showTerminal(desired?: string) {
   dock.append(keys, compose);
   root.append(dock);
   const id = active.id, generation = screenGeneration;
-  await terminalFontReady(terminalOptions);
+  await terminalFontReady(terminalOptions, () => {
+    if (active?.id === id && generation === screenGeneration) refreshTerminalFont();
+  });
   if (active?.id !== id || generation !== screenGeneration) return;
   emulator = new Terminal({ ...terminalOptions, cols: active.cols, rows: active.rows });
   emulator.open(canvas);
@@ -569,7 +571,7 @@ function setTerminalView(view: TerminalView, remember = false) {
     readPosition = viewport.scrollTop;
   } else {
     viewport.scrollTop = mirrorFollowing ? viewport.scrollHeight : mirrorPosition;
-    emulator?.refresh(0, emulator.rows - 1);
+    if (emulator) remeasureTerminalFont(emulator);
     scaleTerminal();
     if (mirrorFollowing) scrollMirrorNewest();
     else syncMirrorScroll(viewport);
@@ -631,22 +633,28 @@ function scaleTerminal() {
     );
   }
 }
-document.fonts.addEventListener("loadingdone", () => {
+function refreshTerminalFont() {
   if (!emulator) return;
   const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
   const previousRowHeight = mirrorRowHeight();
+  // Native scrolling can lead its event. Capture the live row position and
+  // follow state before font metrics change the fitted row height.
+  const rowPosition = (viewport?.scrollTop ?? 0) / (previousRowHeight || 1);
+  const follow = !!viewport && viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 32;
   remeasureTerminalFont(emulator);
   observation.remeasureFont();
-  scaleTerminal();
   if (terminalView === "mirror" && viewport && !viewport.hidden) {
-    if (mirrorFollowing) scrollMirrorNewest();
+    scaleTerminal();
+    mirrorFollowing = follow;
+    if (follow) scrollMirrorNewest();
     else {
-      mirrorPosition = mirrorPosition / previousRowHeight * mirrorRowHeight();
+      mirrorPosition = rowPosition * mirrorRowHeight();
       viewport.scrollTop = mirrorPosition;
       syncMirrorScroll(viewport);
     }
   }
-});
+}
+document.fonts.addEventListener("loadingdone", refreshTerminalFont);
 function dimensions(cols: number, rows: number) {
   if (!emulator || !active) return;
   if (
