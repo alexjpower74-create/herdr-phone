@@ -79,16 +79,18 @@ export class Observer implements Observation {
   private fail() {
     if (this.closed) return;
     this.close();
-    this.failed();
+    try { this.failed(); } catch { /* A failed transport cannot report its own failure. */ }
   }
   close() {
     if (this.closed) return;
     this.closed = true;
-    if (this.channel !== undefined)
-      this.core.process?.stdin.write(frame(this.channel, 2, Buffer.alloc(0)));
+    try {
+      if (this.channel !== undefined)
+        this.core.process?.stdin.write(frame(this.channel, 2, Buffer.alloc(0)));
+    } catch { /* A closed pipe already releases the observation. */ }
     this.queue = [];
     this.pendingBytes = 0;
-    this.core.close();
+    try { this.core.close(); } catch { /* Teardown is best effort after disconnect. */ }
   }
 }
 export const observe: ObserverFactory = (request, output, failed) =>

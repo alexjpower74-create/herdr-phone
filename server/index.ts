@@ -112,24 +112,29 @@ export function start(
   const observerFactory = options.observerFactory ?? (core instanceof Core ? observe : undefined);
   function release(ws: any) {
     ws.data.generation = (ws.data.generation || 0) + 1;
-    ws.data.observer?.close();
+    const observer = ws.data.observer;
     ws.data.observer = undefined;
+    try { observer?.close(); } catch { /* Teardown must not escape an event callback. */ }
     ws.data.watch = undefined;
     ws.data.screenKey = undefined;
   }
   function closeSocket(ws: any, code = 1013, reason = "Slow consumer") {
     release(ws);
     sockets.delete(ws);
-    ws.close(code, reason);
+    try { ws.close(code, reason); } catch { /* The transport may already be gone. */ }
+  }
+  function notify(ws: any, value: any) {
+    try { send(ws, value); }
+    catch { closeSocket(ws); }
   }
   function send(ws: any, value: any) {
     if (!sockets.has(ws)) throw Error("Socket closed");
     // A queued send has ambiguous delivery. Close instead of acknowledging it
     // to the core and letting an unbounded replay build behind the phone.
-    if (ws.getBufferedAmount() > 128 * 1024 || ws.send(JSON.stringify(value)) <= 0) {
-      closeSocket(ws);
-      throw Error("Socket backpressure");
-    }
+    try {
+      if (ws.getBufferedAmount() > 128 * 1024 || ws.send(JSON.stringify(value)) <= 0)
+        throw Error("Socket backpressure");
+    } catch (e) { closeSocket(ws); throw e; }
   }
   async function watch(ws: any, id: string, watchId: string, history: number) {
     release(ws);
@@ -150,9 +155,9 @@ export function start(
       const unavailable = () => {
         if (!current() || failed) return;
         failed = true;
-        observation?.close();
+        try { observation?.close(); } catch { /* Already released or disconnected. */ }
         ws.data.observer = undefined;
-        send(ws, { type: "error", terminalId: id, watchId,
+        notify(ws, { type: "error", terminalId: id, watchId,
           code: "observer_unavailable", message: "Live observation unavailable. Showing current screen only." });
       };
       if (facts.state !== "live" || !observerFactory) unavailable();
@@ -175,7 +180,7 @@ export function start(
     } catch (e) {
       if (!current()) return;
       if (e instanceof Failure && e.status === 401) closeSocket(ws, 4001, "Device revoked");
-      else send(ws, { type: "error", terminalId: id, watchId, code: "observer_unavailable", message: "Live observation unavailable. Showing current screen only." });
+      else notify(ws, { type: "error", terminalId: id, watchId, code: "observer_unavailable", message: "Live observation unavailable. Showing current screen only." });
     }
   }
   const root = resolve(
@@ -511,7 +516,7 @@ export function start(
           void watch(ws, msg.terminalId, msg.watchId ?? randomBytes(12).toString("hex"), msg.history ?? 500);
         } catch (e) {
           if (e instanceof Failure && e.status === 401) closeSocket(ws, 4001, "Device revoked");
-          else send(ws, { type: "error", code: "invalid_request", message: "Request rejected." });
+          else notify(ws, { type: "error", code: "invalid_request", message: "Request rejected." });
         }
       },
       close(ws) { release(ws); sockets.delete(ws); },
@@ -558,8 +563,8 @@ export function start(
         ws.data.connected = false;
         ws.data.revision = undefined;
         if (sockets.has(ws)) {
-          try { send(ws, { type: "connection", connected: false }); }
-          finally { closeSocket(ws, 1012, "Core reconnecting"); }
+          notify(ws, { type: "connection", connected: false });
+          closeSocket(ws, 1012, "Core reconnecting");
         }
       }
     } finally {
@@ -617,6 +622,7 @@ export function start(
   }, 750);
   return {
     server,
+    sockets,
     state,
     store,
     core,
