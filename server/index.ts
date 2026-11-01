@@ -1,3 +1,6 @@
+import { Uploads, uploadIds } from "./uploads";
+import { MAX_UPLOAD, UPLOAD_ENVELOPE } from "./upload-manifest";
+import type { UploadTransport } from "./upload-transport";
 import { transcriptSource, type TranscriptSource } from "./conversation";
 import { createHash } from "node:crypto";
 import { resolve, sep } from "node:path";
@@ -96,6 +99,7 @@ export function start(
     pushTransport?: PushTransport;
     observerFactory?: ObserverFactory;
     transcriptSource?: TranscriptSource;
+    uploadTransport?: UploadTransport;
   } = {},
 ) {
   const port = options.port ?? Number(process.env.HERDR_PHONE_PORT || 8790);
@@ -108,6 +112,8 @@ export function start(
   const core = options.core || new Core(),
     store = options.store || new Store(),
     state = new Snapshot(core);
+  const uploads = new Uploads(core, store, options.uploadTransport);
+  void uploads.prune().catch(() => {});
   const conversations = options.transcriptSource ?? transcriptSource(core);
   const push = new Push(store, origin, options.pushTransport);
   const sockets = new Set<any>(),
@@ -259,6 +265,29 @@ export function start(
       throw invalid();
     }
   }
+  async function multipart(req: Request): Promise<File> {
+    const contentType = req.headers.get("content-type") || "";
+    if (!/^multipart\/form-data;\s*boundary=/i.test(contentType)) throw invalid();
+    if (Number(req.headers.get("content-length")) > MAX_UPLOAD + UPLOAD_ENVELOPE) throw new Failure(413, "too_large", "File is too large.");
+    const reader = req.body?.getReader();
+    if (!reader) throw invalid();
+    const chunks: Uint8Array[] = []; let bytes = 0;
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      bytes += part.value.length;
+      if (bytes > MAX_UPLOAD + UPLOAD_ENVELOPE) { await reader.cancel(); throw new Failure(413, "too_large", "File is too large."); }
+      chunks.push(part.value);
+    }
+    let form: FormData;
+    try { form = await new Request("http://upload.invalid", { method: "POST", headers: { "content-type": contentType }, body: Buffer.concat(chunks) }).formData(); }
+    catch { throw invalid(); }
+    const parts = [...form.entries()];
+    if (parts.length !== 1 || parts[0][0] !== "file" || !(parts[0][1] instanceof File)) throw invalid();
+    const file = parts[0][1];
+    if (file.size > MAX_UPLOAD || bytes - file.size > UPLOAD_ENVELOPE) throw new Failure(413, "too_large", "File is too large.");
+    return file;
+  }
   function serial(id: string, action: () => Promise<any>) {
     const previous = queues.get(id) || Promise.resolve();
     const next = previous.catch(() => {}).then(action);
@@ -292,7 +321,7 @@ export function start(
   const server = Bun.serve<SocketData>({
     hostname: "127.0.0.1",
     port,
-    maxRequestBodySize: 32768,
+    maxRequestBodySize: MAX_UPLOAD + UPLOAD_ENVELOPE,
     async fetch(req, srv) {
       try {
         const url = new URL(req.url),
@@ -383,7 +412,7 @@ export function start(
             return json(result, 201);
           }
           const match = path.match(
-            /^\/api\/terminals\/([^/]+)\/(screen|keys|send|prompt|conversation)$/,
+            /^\/api\/terminals\/([^/]+)\/(screen|keys|send|prompt|conversation|uploads)$/,
           );
           if (match) {
             let id;
@@ -394,6 +423,9 @@ export function start(
             }
             if (!/^(?:[A-Za-z0-9_.-]+\/)?t[a-zA-Z0-9]+$/.test(id))
               throw invalid();
+            if (match[2] === "uploads" && req.method === "POST") {
+              return json({ upload: await uploads.receive(device.id, id, () => multipart(req), req.signal) }, 201);
+            }
             if (match[2] === "conversation" && req.method === "GET") {
               if ([...url.searchParams.keys()].some(k => k !== "before") || url.searchParams.getAll("before").length > 1) throw invalid();
               const result = await conversations(id, url.searchParams.get("before") ?? undefined);
@@ -402,7 +434,7 @@ export function start(
             }
             if (match[2] === "screen" && req.method === "GET")
               return json(await screen(id));
-            if (req.method === "POST" && !["screen", "conversation"].includes(match[2])) {
+            if (req.method === "POST" && !["screen", "conversation", "uploads"].includes(match[2])) {
               const b = await body(req);
               if (match[2] === "prompt") {
                 if (
@@ -430,12 +462,16 @@ export function start(
                   });
                 });
               } else if (match[2] === "send") {
-                const text = validateText(b.text);
+                const attachments = uploadIds(b.uploads);
+                const text = attachments.length && b.text === "" ? "" : validateText(b.text);
                 if (b.force !== undefined && typeof b.force !== "boolean")
                   throw invalid();
                 if (b.force === true && typeof b.screenId !== "string")
                   throw invalid();
                 await serial(id, async () => {
+                  await auth(req);
+                  const paths = await uploads.paths(device.id, id, attachments);
+                  const message = paths.length ? paths.map(path => JSON.stringify(path)).join("\n") + (text ? "\n\n" + text : "") : text;
                   if (b.force === true) {
                     const current = await screen(id);
                     if (
@@ -448,9 +484,11 @@ export function start(
                         "The dialog changed. Review it again.",
                       );
                   }
+                  await auth(req);
+                  await uploads.recheck(device.id, id, attachments);
                   await core.call("terminal.send", {
                     terminal: id,
-                    text,
+                    text: message,
                     force: b.force === true,
                   });
                 });
@@ -635,6 +673,7 @@ export function start(
     state,
     store,
     core,
+    uploads,
     push,
     notifications,
     events,
@@ -643,6 +682,7 @@ export function start(
     stop() {
       stopped = true;
       conversations.close?.();
+      uploads.close();
       push.stopped = true;
       events?.close();
       clearInterval(interval);
