@@ -11,14 +11,15 @@ export type ConversationPage = {
   reason?: "not_configured" | "not_found" | "ambiguous" | "offline";
   session: string | null;
   revision: string;
-  turns: { id: string; entries: { id: string; role: "user" | "assistant" | "tool"; text: string }[] }[];
+  warnings?: ("long_output_trimmed" | "scan_limited")[];
+  turns: { continuesPrevious?: boolean; id: string; entries: { id: string; role: "user" | "assistant" | "tool"; text: string }[] }[];
   nextCursor: string | null;
 };
 export type TranscriptSource = ((terminalId: string, before?: string) => Promise<ConversationPage>) & { close?: () => void };
 type Source = { format: "messages" | "responses"; root: string; sessions?: string };
 type Machine = { ssh?: string; sources: Source[] };
-type Cursor = { terminal: string; binding: string; size: number; digest: string; before: number; generation: string };
-type Result = { binding: string; size: number; digest: string; fingerprint: string[]; turns: any[]; next: number | null; unchanged?: boolean; error?: string };
+type Cursor = { terminal: string; binding: string; size: number; digest: string; fingerprint: string[]; guards: [number, number, string][]; join?: string; before: number; generation: string };
+type Result = { binding: string; size: number; digest: string; fingerprint: string[]; guards: [number, number, string][]; join?: string; warnings?: ConversationPage["warnings"]; turns: any[]; next: number | null; unchanged?: boolean; error?: string };
 type Cached = { result: Result; generation: string; page: ConversationPage };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const unavailable = (reason: ConversationPage["reason"]): ConversationPage => ({ available: false, reason, session: null, revision: "", turns: [], nextCursor: null });
@@ -41,7 +42,7 @@ export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE
     if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw invalidCursor();
     try {
       const value = JSON.parse(Buffer.from(payload, "base64url").toString());
-      if (value.terminal !== terminal || !Number.isSafeInteger(value.before) || value.before < 0 || !Number.isSafeInteger(value.size) || value.size < value.before || !/^[a-f0-9]{64}$/.test(value.binding) || !/^[a-f0-9]{64}$/.test(value.digest) || typeof value.generation !== "string") throw Error();
+      if (value.terminal !== terminal || !Number.isSafeInteger(value.before) || value.before < 0 || !Number.isSafeInteger(value.size) || value.size < value.before || !/^[a-f0-9]{64}$/.test(value.binding) || !/^[a-f0-9]{64}$/.test(value.digest) || typeof value.generation !== "string" || !Array.isArray(value.fingerprint) || !Array.isArray(value.guards) || value.guards.length > 3) throw Error();
       return value;
     } catch { throw invalidCursor(); }
   }
@@ -119,8 +120,8 @@ export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE
       return unavailable("not_found");
     }
     const previous = cache.get(terminalId);
-    const expected = cursor || (previous ? { binding: previous.result.binding, size: previous.result.size, digest: previous.result.digest } : undefined);
-    const request = { pid, cwd: facts.foreground?.cwd, sources: config.sources, expected, before: cursor?.before, cached: !cursor ? previous?.result.fingerprint : undefined };
+    const expected = cursor || (previous ? { binding: previous.result.binding, size: previous.result.size, fingerprint: previous.result.fingerprint, guards: previous.result.guards } : undefined);
+    const request = { pid, cwd: facts.foreground?.cwd, sources: config.sources, expected, before: cursor?.before, join: cursor?.join, cached: !cursor ? previous?.result.fingerprint : undefined };
     let result = await run(config, request);
     let generation = cursor?.generation || previous?.generation || "";
     if (result.error === "changed" && !cursor) {
@@ -128,10 +129,10 @@ export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE
       result = await run(config, { ...request, expected: undefined, cached: undefined });
     }
     if (result.error) {
-      if (cursor || result.error === "changed") throw changed();
+      if (result.error === "changed" || (cursor && ["not_found", "ambiguous"].includes(result.error))) throw changed();
       cache.delete(terminalId);
       if (["not_found", "ambiguous"].includes(result.error)) return unavailable(result.error as "not_found" | "ambiguous");
-      if (result.error === "limit") throw new Failure(413, "conversation_too_large", "Saved conversation exceeds the reader limit.");
+      if (result.error === "timeout") throw new Failure(503, "conversation_timeout", "Saved conversation read timed out.");
       throw new Failure(503, "conversation_unavailable", "Saved conversation reader is unavailable.");
     }
     const current = await core.call("terminal.get", { terminal: terminalId });
@@ -141,8 +142,9 @@ export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE
     const session = hash(result.binding + generation);
     const page: ConversationPage = {
       available: true, session, revision: hash(session + result.digest),
-      turns: result.turns.map(t => ({ id: hash(session + ":turn:" + t.id), entries: t.entries.map((e: any) => ({ ...e, id: hash(session + ":entry:" + e.id) })) })),
-      nextCursor: result.next === null ? null : encode({ terminal: terminalId, binding: result.binding, size: result.size, digest: result.digest, before: result.next, generation }),
+      warnings: result.warnings,
+      turns: result.turns.map(t => ({ ...(t.continuesPrevious ? { continuesPrevious: true } : {}), id: hash(session + ":turn:" + t.id), entries: t.entries.map((e: any) => ({ ...e, id: hash(session + ":entry:" + e.id) })) })),
+      nextCursor: result.next === null ? null : encode({ terminal: terminalId, binding: result.binding, size: result.size, digest: result.digest, fingerprint: result.fingerprint, guards: result.guards, join: result.join, before: result.next, generation }),
     };
     if (!cursor) {
       cache.delete(terminalId);

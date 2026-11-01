@@ -156,10 +156,15 @@ test("same-ID final reply snapshots replace text without duplicate entries", asy
   });
 });
 
-test("resource limits return explicit errors instead of truncating transcript data", async () => {
+test("incomplete oversized tail waits for newline then skips with a notice", async () => {
   await fixture("responses", async ({ source, path }: any) => {
     await appendFile(path, "x".repeat(4 * 1024 * 1024 + 1));
-    await expect(source("t1")).rejects.toMatchObject({ status: 413, code: "conversation_too_large" });
+    const waiting = await source("t1");
+    expect(waiting.turns).toHaveLength(2);
+    await appendFile(path, "\n");
+    const page = await source("t1");
+    expect(page.turns).toHaveLength(2);
+    expect(page.warnings).toContain("long_output_trimmed");
   });
 });
 
@@ -204,8 +209,66 @@ test("unchanged latest poll skips parsing using lossless filesystem fingerprints
     };
     const first = await read();
     expect(first.fingerprint.every((v: unknown) => typeof v === "string")).toBe(true);
-    const second = await read({ cached: first.fingerprint, expected: { binding: first.binding, size: first.size, digest: first.digest } });
+    const second = await read({ cached: first.fingerprint, expected: { binding: first.binding, size: first.size, fingerprint: first.fingerprint, guards: first.guards } });
     expect(second.unchanged).toBe(true);
     expect(second.turns).toBeUndefined();
+  });
+});
+
+for (const format of ["messages", "responses"] as const) {
+  test(`${format}: byte limited fragments reach original user with unique entries`, async () => {
+    await fixture(format, async ({ source, path }: any) => {
+      const record = (id: string, role: string, text: string) => JSON.stringify(format === "messages"
+        ? { type: role, uuid: id, message: { role, content: [{ type: "text", text }] } }
+        : { type: "response_item", payload: { type: "message", id, role, content: [{ type: "output_text", text }] } }) + "\n";
+      await appendFile(path, record("giant-user", "user", "Original boundary user"));
+      for (let n = 0; n < 12; n++) await appendFile(path, record(`large-${n}`, "assistant", `${n}:` + "a".repeat(900000)));
+      let page = await source("t1");
+      expect(page.turns[0].continuesPrevious).toBe(true);
+      const tailID = page.turns[0].id;
+      const ids = new Set<string>(); let found = false, reads = 0;
+      while (true) {
+        expect(page.turns.flatMap((t: any) => t.entries).reduce((n: number, e: any) => n + Buffer.byteLength(e.text), 0)).toBeLessThanOrEqual(2 * 1024 * 1024);
+        for (const turn of page.turns) for (const entry of turn.entries) {
+          expect(ids.has(entry.id)).toBe(false); ids.add(entry.id);
+          if (entry.text === "Original boundary user") { found = true; expect(turn.id).toBe(tailID); }
+        }
+        if (!page.nextCursor) break;
+        expect(++reads).toBeLessThan(20);
+        page = await source("t1", page.nextCursor);
+      }
+      expect(found).toBe(true);
+      expect(ids.size).toBe(19); // six fixture entries + original user + twelve replies
+    });
+  });
+}
+
+test("scan-only windows advance, skip giant records and recover earlier user", async () => {
+  await fixture("responses", async ({ source, path }: any) => {
+    // A complete giant private record is never decoded or exposed.
+    await appendFile(path, JSON.stringify({ type: "ignored", text: "z".repeat(18 * 1024 * 1024) }) + "\n");
+    let page = await source("t1");
+    expect(page.turns).toEqual([]);
+    expect(page.warnings).toContain("scan_limited");
+    const cursors = new Set<string>(); let found = false;
+    for (let i = 0; i < 5; i++) {
+      if (page.turns.some((t: any) => t.entries.some((e: any) => e.text === "First question"))) found = true;
+      if (!page.nextCursor) break;
+      expect(cursors.has(page.nextCursor)).toBe(false); cursors.add(page.nextCursor);
+      page = await source("t1", page.nextCursor);
+    }
+    expect(found).toBe(true);
+    expect(page.nextCursor).toBeNull();
+  });
+});
+
+test("oversized displayed text trims while subsequent turns remain pageable", async () => {
+  await fixture("responses", async ({ source, path }: any) => {
+    await appendFile(path, user(300) + reply("é".repeat(1400000)) + "\n" + user(301));
+    const page = await source("t1");
+    expect(page.warnings).toContain("long_output_trimmed");
+    expect(JSON.stringify(page.turns)).toContain("[long output trimmed]");
+    expect(page.turns.at(-1).entries[0].text).toBe("Question 301");
+    expect(page.nextCursor).not.toBeNull();
   });
 });
