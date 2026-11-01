@@ -1,4 +1,10 @@
-import { test, expect, type Page, type WebSocketRoute } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type WebSocketRoute,
+} from "@playwright/test";
 
 test.use({ isMobile: true });
 
@@ -189,6 +195,31 @@ test("200-column screen is readable by default without horizontal page scroll", 
 test.describe("screen scrolling", () => {
   // Mobile WebKit does not expose wheel input; use its desktop engine at the same phone viewport.
   test.use({ isMobile: false });
+  async function settledPosition(viewport: Locator) {
+    return viewport.evaluate(
+      (el) =>
+        new Promise<number>((resolve, reject) => {
+          let previous = el.scrollTop;
+          let stableFrames = 0;
+          let frame = 0;
+          const timeout = setTimeout(() => {
+            cancelAnimationFrame(frame);
+            reject(new Error("Terminal scrolling did not settle"));
+          }, 5000);
+          const sample = () => {
+            const current = el.scrollTop;
+            stableFrames =
+              Math.abs(current - previous) < 0.1 ? stableFrames + 1 : 0;
+            previous = current;
+            if (stableFrames >= 6) {
+              clearTimeout(timeout);
+              resolve(current);
+            } else frame = requestAnimationFrame(sample);
+          };
+          frame = requestAnimationFrame(sample);
+        }),
+    );
+  }
   test("read view follows newest output until the person scrolls up", async ({
     page,
   }) => {
@@ -216,13 +247,11 @@ test.describe("screen scrolling", () => {
         ),
       )
       .toBeGreaterThan(200);
-    const prior = await viewport.evaluate((el) => el.scrollTop);
+    const prior = await settledPosition(viewport);
     mock.update(wideScreen);
     mock.update(wideScreen.trimEnd() + "\nAnother new line.");
     await expect(read).toContainText("Another new line.");
-    expect(
-      Math.abs((await viewport.evaluate((el) => el.scrollTop)) - prior),
-    ).toBeLessThan(3);
+    expect(Math.abs((await settledPosition(viewport)) - prior)).toBeLessThan(3);
     await page.mouse.wheel(0, 10000);
     await expect
       .poll(() =>
@@ -231,6 +260,7 @@ test.describe("screen scrolling", () => {
         ),
       )
       .toBeLessThan(3);
+    await settledPosition(viewport);
     mock.update(wideScreen.trimEnd() + "\nNewest arrival.");
     await expect(read).toContainText("Newest arrival.");
     await expect
@@ -240,6 +270,61 @@ test.describe("screen scrolling", () => {
         ),
       )
       .toBeLessThan(3);
+    await settledPosition(viewport);
+
+    // Composited scrolling can advance before its scroll callback runs. Hold
+    // that callback while real wheel input moves the viewport, then deliver an
+    // output frame. Observe the position immediately after paint, before later
+    // wheel frames could hide a momentary jump back to the bottom.
+    await viewport.evaluate((el) => {
+      const probe = { callbacksHeld: 0, paintedTop: null as number | null };
+      const hold = (event: Event) => {
+        if (event.target !== el) return;
+        probe.callbacksHeld++;
+        event.stopImmediatePropagation();
+      };
+      const read = el.querySelector(".terminal-read")!;
+      const observer = new MutationObserver(() => {
+        if (
+          probe.paintedTop === null &&
+          read.textContent?.includes("Output during scrolling.")
+        )
+          probe.paintedTop = el.scrollTop;
+      });
+      observer.observe(read, { childList: true });
+      document.addEventListener("scroll", hold, true);
+      (window as any).scrollProbe = probe;
+      (window as any).releaseScrollProbe = () => {
+        observer.disconnect();
+        document.removeEventListener("scroll", hold, true);
+      };
+    });
+    try {
+      await page.mouse.wheel(0, -700);
+      await expect
+        .poll(() =>
+          viewport.evaluate(
+            (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+          ),
+        )
+        .toBeGreaterThan(200);
+      const during = await viewport.evaluate((el) => el.scrollTop);
+      mock.update(wideScreen.trimEnd() + "\nOutput during scrolling.");
+      await expect
+        .poll(() => page.evaluate(() => (window as any).scrollProbe.paintedTop))
+        .not.toBeNull();
+      const probe = await page.evaluate(() => (window as any).scrollProbe);
+      expect(probe.callbacksHeld).toBeGreaterThan(0);
+      expect(probe.paintedTop).toBeLessThanOrEqual(during + 3);
+      await settledPosition(viewport);
+      expect(
+        await viewport.evaluate(
+          (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+        ),
+      ).toBeGreaterThan(200);
+    } finally {
+      await page.evaluate(() => (window as any).releaseScrollProbe());
+    }
   });
 });
 
