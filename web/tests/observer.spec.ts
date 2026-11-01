@@ -159,3 +159,42 @@ test("plain fallback is labelled and exact-width bottom rows do not scroll the s
   expect(data.rows[23].text).toBe("23".padEnd(80, "x"));
   expect(data.resets).toBe(0);
 });
+
+test("history recomputes a moved anchor after later replay chunks drain", async ({ page }) => {
+  const mock = await setup(page);
+  mock.output(history(500, 1023));
+  await expect.poll(async () => (await inspect(page))?.observer).toBe(true);
+  const viewport = page.locator(".terminal-viewport");
+  const bounds = await viewport.boundingBox();
+  await page.mouse.move(bounds!.x + 100, bounds!.y + 80);
+  await page.mouse.wheel(0, -100000);
+  await expect.poll(() => mock.watches.length).toBe(2);
+  await page.evaluate(() => {
+    const original = window.requestAnimationFrame.bind(window);
+    const held: (() => void)[] = [];
+    window.requestAnimationFrame = callback => original(time => {
+      if (document.querySelector(".observer-staging")) held.push(() => callback(time));
+      else callback(time);
+    });
+    (window as any).releaseReplayPaints = () => {
+      window.requestAnimationFrame = original;
+      for (const callback of held.splice(0)) callback();
+    };
+  });
+  try {
+    // A provisional screen contains the anchor at row zero, before the fuller
+    // replay replaces it. Hold painting so both chunks precede the atomic swap.
+    mock.output("Retained row 500");
+    await expect.poll(() => page.locator(".observer-staging").count()).toBe(1);
+    await page.waitForTimeout(100);
+    mock.output("\x1b[H\x1b[2J" + history(0, 1023), 1);
+    await page.waitForTimeout(100);
+    await page.evaluate(() => (window as any).releaseReplayPaints());
+    await expect.poll(async () => (await inspect(page)).historyBusy).toBe(false);
+    const data = await inspect(page);
+    expect(data.viewportY).toBe(500);
+    expect(data.rows[data.viewportY].text).toBe("Retained row 500");
+  } finally {
+    await page.evaluate(() => (window as any).releaseReplayPaints?.());
+  }
+});

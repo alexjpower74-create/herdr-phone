@@ -63,6 +63,21 @@ export class ObserverDisplay {
     this.host?.remove();
     this.host = undefined;
   }
+  private anchorIndex(target: Terminal) {
+    if (!this.anchor) return -1;
+    const buffer = target.buffer.active;
+    const expected = this.anchor.index + Math.max(0,
+      buffer.length - (this.getCurrent()?.buffer.active.length ?? 0));
+    let index = -1, distance = Infinity;
+    for (let i = 0; i < buffer.length; i++) {
+      if (buffer.getLine(i)?.translateToString(true) !== this.anchor.text) continue;
+      if (Math.abs(i - expected) < distance) {
+        index = i;
+        distance = Math.abs(i - expected);
+      }
+    }
+    return index;
+  }
   unavailable() {
     this.failed = true;
     this.clearStaging();
@@ -107,18 +122,7 @@ export class ObserverDisplay {
         if (id !== this.watchId || this.failed) return;
         this.pendingBytes -= bytes.length;
         if (!this.staging) { this.changed(); return; }
-        const buffer = target.buffer.active;
-        let index = -1;
-        if (this.anchor) {
-          // Choose the nearest matching row relative to the history extension.
-          const expected = this.anchor.index + Math.max(0, buffer.length - (this.getCurrent()?.buffer.active.length ?? 0));
-          let distance = Infinity;
-          for (let i = 0; i < buffer.length; i++) {
-            if (buffer.getLine(i)?.translateToString(true) !== this.anchor.text) continue;
-            if (Math.abs(i - expected) < distance) { index = i; distance = Math.abs(i - expected); }
-          }
-          if (index < 0) return;
-        }
+        if (this.anchor && this.anchorIndex(target) < 0) return;
         if (this.readyFrame) return;
         // Two paints allow the replay queue to drain while the old view stays visible.
         let stableSeq = this.seq;
@@ -130,6 +134,8 @@ export class ObserverDisplay {
               return;
             }
             this.readyFrame = 0;
+            const index = this.anchor ? this.anchorIndex(this.staging) : -1;
+            if (this.anchor && index < 0) return;
             clearTimeout(this.timeout);
             const next = this.staging, host = this.host;
             this.staging = undefined;
