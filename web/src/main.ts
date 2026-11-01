@@ -27,6 +27,7 @@ let currentText = "",
   screenGeneration = 0;
 let conversation: Conversation | undefined;
 let conversationOpen = false;
+let terminalEpoch = 0;
 let appEpoch = 0;
 let paintFrame = 0;
 let mirrorSource: string | undefined;
@@ -158,6 +159,7 @@ function notice(message: string) {
   el.textContent = message;
 }
 function disposeTerminal() {
+  terminalEpoch++;
   conversation?.dispose();
   conversation = undefined;
   conversationOpen = false;
@@ -493,9 +495,9 @@ async function showTerminal(desired?: string) {
   compose.append(input, submit);
   dock.append(keys, compose);
   root.append(dock);
-  const id = active.id, generation = screenGeneration;
+  const id = active.id, generation = screenGeneration, lifetime = terminalEpoch;
   await terminalFontReady(terminalOptions, () => {
-    if (active?.id === id && generation === screenGeneration) refreshTerminalFont();
+    if (active?.id === id && lifetime === terminalEpoch) refreshTerminalFont();
   });
   if (active?.id !== id || generation !== screenGeneration) return;
   emulator = new Terminal({ ...terminalOptions, cols: active.cols, rows: active.rows });
