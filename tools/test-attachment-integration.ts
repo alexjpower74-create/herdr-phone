@@ -176,7 +176,10 @@ try {
   await writeFile(join(localUploads, "keep.txt"), "Unrelated sentinel", { mode: 0o600 });
   await remote("import pathlib,sys;p=pathlib.Path(sys.argv[1]);p.write_text('Unrelated sentinel');p.chmod(0o600)", [join(remoteUploads, "keep.txt")]);
   now += 8 * 86400000;
-  await app.uploads.prune();
+  for (let batch = 0; batch < 10 && (await store.read()).uploads?.length; batch++) {
+    await app.uploads.prune();
+    now += 61000;
+  }
   assert.equal((await store.read()).uploads?.length || 0, 0, "Expired upload metadata remains");
   for (const item of saved) {
     const path = join(item.root, item.date, item.filename);

@@ -233,10 +233,12 @@ type UploadedFile = {
 Supported content is PNG, JPEG, GIF, WebP, PDF and UTF-8 plain text. HEIC/HEIF
 images are normalized to JPEG before transfer, with orientation applied and
 metadata removed. Conversion uses a locally installed ImageMagick with HEIF
-support, bounded to 32 million pixels, 128 MiB working memory and 15 seconds.
+support, bounded to 32 million pixels, a 128 MiB pixel cache and 15 seconds.
 Unsupported or invalid content returns 415 `unsupported_file`; missing conversion
 support returns 503 `conversion_unavailable`; size/pixel limits return 413.
 No uploaded content is served as a public URL or interpreted by the bridge.
+Image validation requires ImageMagick; PDF validation requires `pdfinfo` from
+Poppler. These checks run on the bridge before any remote transfer.
 
 Files are stored on the terminal's machine under
 `~/.cache/herdr-phone/uploads/<date>/`, with generated names, mode 0600 and
