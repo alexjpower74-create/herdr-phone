@@ -4,6 +4,7 @@ import "@fontsource/geist/400.css";
 import "@fontsource/geist/500.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "./style.css";
+import { terminalFontReady, remeasureTerminalFont } from "./terminal-font";
 import { Conversation } from "./conversation";
 import { ApiError, Client } from "./client";
 import { readableLines, type ReadLine } from "./readable";
@@ -348,7 +349,7 @@ function openSpace(next: Space, desired?: string) {
     next.tabs[0];
   showTerminal(desired);
 }
-function showTerminal(desired?: string) {
+async function showTerminal(desired?: string) {
   const savedSpace = space,
     savedTab = tab;
   disposeTerminal();
@@ -492,6 +493,9 @@ function showTerminal(desired?: string) {
   compose.append(input, submit);
   dock.append(keys, compose);
   root.append(dock);
+  const id = active.id, generation = screenGeneration;
+  await terminalFontReady(terminalOptions);
+  if (active?.id !== id || generation !== screenGeneration) return;
   emulator = new Terminal({ ...terminalOptions, cols: active.cols, rows: active.rows });
   emulator.open(canvas);
   viewport.onclick = () => input.focus();
@@ -512,8 +516,6 @@ function showTerminal(desired?: string) {
   currentText = "";
   currentPrompt = null;
   usedPrompt = "";
-  const id = active.id,
-    generation = screenGeneration;
   client.watch(id);
   client
     .screen(id)
@@ -629,6 +631,22 @@ function scaleTerminal() {
     );
   }
 }
+document.fonts.addEventListener("loadingdone", () => {
+  if (!emulator) return;
+  const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
+  const previousRowHeight = mirrorRowHeight();
+  remeasureTerminalFont(emulator);
+  observation.remeasureFont();
+  scaleTerminal();
+  if (terminalView === "mirror" && viewport && !viewport.hidden) {
+    if (mirrorFollowing) scrollMirrorNewest();
+    else {
+      mirrorPosition = mirrorPosition / previousRowHeight * mirrorRowHeight();
+      viewport.scrollTop = mirrorPosition;
+      syncMirrorScroll(viewport);
+    }
+  }
+});
 function dimensions(cols: number, rows: number) {
   if (!emulator || !active) return;
   if (
