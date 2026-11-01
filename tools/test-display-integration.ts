@@ -248,6 +248,7 @@ finally:
   const pageErrors: string[] = [];
   page.on("pageerror", (e: Error) => pageErrors.push(e.message));
   await page.goto(`${origin}/#terminal=${encodeURIComponent(terminalId!)}`);
+  if (!baseline) await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   await page.locator(".terminal-viewport").waitFor();
   await page.locator(".xterm-accessibility-tree").getByText("You: show the checks", { exact: true }).waitFor({ state: "attached", timeout: 15000 });
   await size("phone observer only", headless);
@@ -280,6 +281,7 @@ finally:
   await command("history");
   for (const view of ["mirror", "read"] as const) {
     await page.goto(`${origin}/#terminal=${encodeURIComponent(terminalId!)}`);
+    if (!baseline) await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
     await page.locator(".terminal-viewport").waitFor();
     if (!baseline) await eventually(async () => {
       const snapshot = await inspect(page);

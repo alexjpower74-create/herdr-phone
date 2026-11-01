@@ -194,9 +194,12 @@ try {
     page.on("pageerror", (e: Error) => errors.push(e.message));
     try {
       await page.goto(`${origin}/#terminal=${encodeURIComponent(id)}`);
-      await page.getByRole("button", { name: "Conversation", exact: true }).tap();
       const panel = page.locator(".conversation");
+      await panel.waitFor({ state: "visible" });
+      assert(await page.getByRole("button", { name: "Terminal view", exact: true }).isVisible());
+      assert(!await page.locator(".terminal-viewport").isVisible());
       await panel.getByText("Message 125: review this saved conversation.", { exact: true }).waitFor();
+      record(`${machine === "local" ? "local" : "remote"} ${format}: opens saved conversation without a discovery tap`);
       const first = panel.getByText("Message 001: review this saved conversation.", { exact: true });
       const firstVisible = async () => {
         if (!await first.count()) return false;

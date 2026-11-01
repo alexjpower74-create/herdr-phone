@@ -61,7 +61,9 @@ or focus. It never contacts a public push provider.
 ## What it does (v1)
 - **Home** is Herdr's Spaces sidebar, with spaces grouped by machine. A + next to each machine opens a new space there.
 - **Tap a space** to open its first tab. The other tabs run across the top.
-- **Each tab opens in Mirror.** The live terminal keeps its ANSI colours, fits the phone width and supports browser pinch zoom. Read is one header tap away: it wraps the text and follows new output until you scroll up. Both views begin with about 500 retained history rows and load earlier rows when you reach the top. Your last view choice is remembered on this device. Compose a message locally, then tap Send or Enter to submit it. The key bar provides Shift+Tab, Esc, the arrows, Enter and ^C without changing the desktop terminal size.
+- **Each tab opens in Conversation.** Saved messages stay live, with your messages highlighted and older turns available by scrolling up. New replies follow at the bottom until you scroll away. **Terminal view** switches to the live terminal; **Conversation** brings you back.
+- **Terminal view** starts in Mirror, keeping ANSI colours, fitting the phone width and supporting browser pinch zoom. Read wraps the text and follows new output until you scroll up. Both terminal views begin with about 500 retained history rows and load earlier rows at the top. The device remembers your Mirror/Read choice inside Terminal view; reopening a tab always starts in Conversation.
+- **Compose and controls** work in either view. Compose locally, then tap Send or Enter to submit the message. The key bar provides Shift+Tab, Esc, the arrows, Enter and ^C without changing the desktop terminal size.
 - **Approval and menu buttons** preserve the choices and permission scope shown by recognized dialogs. Slash commands such as `/model` and `/effort` use the compose box; unknown menus remain usable with the key bar.
 - **Pairing** uses a one-time code. Optional notifications tell you when a terminal needs you or finishes; tapping one opens its tab.
 
