@@ -211,6 +211,70 @@ accepted for menu navigation. Uppercase letters map to shifted letter keys.
 Validate and bound the entire request before sending any keys. Arbitrary
 literal text does not use this endpoint.
 
+### File attachments
+
+`POST /api/terminals/:id/uploads` accepts `multipart/form-data` with exactly one
+`file` part. Authentication and Origin checks precede body processing. Each
+file is at most 20 MiB; the multipart envelope adds at most 64 KiB. No upload
+token, path, machine name or file URL is accepted in query parameters. Files
+are checked from their bytes, not the supplied filename or MIME type.
+
+```ts
+type UploadedFile = {
+  id: string; // opaque, bound to this device and terminal incarnation
+  name: string; // safe display name
+  type: string; // detected/normalized MIME type
+  size: number; // stored bytes
+  converted: boolean;
+};
+// 201 response: { upload: UploadedFile }
+```
+
+Supported content is PNG, JPEG, GIF, WebP, PDF and UTF-8 plain text. HEIC/HEIF
+images are normalized to JPEG before transfer, with orientation applied and
+metadata removed. Conversion uses a locally installed ImageMagick with HEIF
+support, bounded to 32 million pixels, 128 MiB working memory and 15 seconds.
+Unsupported or invalid content returns 415 `unsupported_file`; missing conversion
+support returns 503 `conversion_unavailable`; size/pixel limits return 413.
+No uploaded content is served as a public URL or interpreted by the bridge.
+
+Files are stored on the terminal's machine under
+`~/.cache/herdr-phone/uploads/<date>/`, with generated names, mode 0600 and
+private directories. `HERDR_PHONE_UPLOADS_DIR` overrides the local root for
+testing or operator configuration. Remote targets reuse the private machine SSH
+mapping from the conversation configuration; optional `uploadsDir` on a machine
+overrides its remote root. No remote installation is needed. Existing files and
+symlinks are never overwritten or followed. Upload metadata is stored atomically
+in private device state. Upload IDs cannot cross devices, terminal incarnations
+or machines. Files and their metadata expire after seven days and are pruned
+on startup and during upload activity.
+
+At most eight files may accompany one message. Stored and in-progress uploads
+are bounded to 512 MiB / 1,024 files per device and 2 GiB / 4,096 files per
+machine; capacity failures return 429 `upload_capacity`. Up to four upload or
+conversion operations run concurrently. Failed transfers release their reserved
+capacity and remove only their own partial files. Revocation and terminal identity
+are rechecked before returning an upload ID.
+
+`POST /api/terminals/:id/send`, body `{ "text": "hello", "uploads": ["<id>"] }`,
+accepts zero to eight ready upload IDs. `text` may be empty only when uploads are
+present. Inside the existing terminal send queue, the bridge validates expiry,
+ownership and terminal incarnation again, then prefixes the absolute stored
+paths (each quoted on its own line) to the typed message. Clients never supply
+filesystem paths. It calls `terminal.send` once, preserving the existing blocked
+dialog and explicit screen-bound force rules. Invalid or unavailable upload IDs
+return 409 `upload_unavailable` before any terminal input.
+
+The paperclip uses the browser's Photos/camera/Files picker with
+`accept="image/*,application/pdf,text/*"` and multiple selection. Selected files
+remain local until Send, show image previews or file names, and can be removed.
+Each terminal retains its own pending selection and draft while the page is
+open. Send uploads the selected files, then submits the captured terminal/message
+only if the connection and request lifetime remain valid. A failed upload never
+sends a partial message. Failed or uncertain sends retain the draft and selection;
+nothing is automatically replayed. Existing JSON request bodies remain capped
+at 32 KiB despite the larger, separately bounded upload route.
+
 `POST /api/terminals/:id/send`, body `{ "text": "hello" }`, submits a complete
 message through `terminal.send`, which pastes the literal text then presses
 Enter. Spaces, punctuation, Unicode and multiline text are preserved. Reject

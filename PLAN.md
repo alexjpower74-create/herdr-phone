@@ -31,6 +31,11 @@ public-safe [home preview](docs/screens/home-webkit.png) uses neutral sample spa
 6. **Yes and No buttons.** When an agent asks to approve something, its choices become big tappable buttons.
 7. **Slash commands work end to end.** You type /model, /effort or /mcp, and their menus show in the terminal. You move through them with the arrow and Enter buttons, or tap an option.
 8. **Pairing by code, and lock-screen notifications** when an agent needs you or finishes.
+9. **File attachments.** A paperclip beside Send accepts photos, camera images,
+   PDFs and text files. Preview or remove selections locally; Send stores them
+   privately on the terminal's machine and includes their paths with the message.
+   Each file is limited to 20 MiB, HEIC images become JPEG, and stored files expire
+   after seven days. Upload or send failure retains the draft for deliberate retry.
 
 ## Later (not v1)
 - Rich conversation formatting and searchable saved sessions.
