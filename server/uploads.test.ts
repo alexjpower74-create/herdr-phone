@@ -417,3 +417,42 @@ test("expiry and eight-ID bound reject input even while terminal incarnation rem
     expect(calls.filter((c: any) => c.method === "terminal.send")).toHaveLength(0);
   });
 });
+
+for (const failure of ["remove failure", "moved root"] as const) {
+  test(`prune fairly continues beyond sixteen expired records after ${failure}`, async () => {
+    const runner = new UploadProcesses(), actual = storageTransport(runner);
+    const reachableId = "f".repeat(48);
+    const attempted: string[] = [];
+    const transport: UploadTransport = async (action, target, record, bytes, signal) => {
+      if (action === "remove") {
+        attempted.push(record.id);
+        if (record.id !== reachableId) throw Error("Permanently unreachable storage");
+      }
+      return actual(action, target, record, bytes, signal);
+    };
+    try {
+      await harness(async ({ upload, app, store, advance }: any) => {
+        await upload("Reachable expired file");
+        const seed = (await store.read()).uploads[0];
+        const reachable = { ...seed, id: reachableId, filename: reachableId + ".txt" };
+        const path = join(reachable.root, reachable.date, reachable.filename);
+        const { rename } = await import("node:fs/promises");
+        await rename(join(seed.root, seed.date, seed.filename), path);
+        const blocked = Array.from({ length: 16 }, (_, n) => {
+          const id = n.toString(16).padStart(48, "0");
+          return { ...seed, id, filename: id + ".txt", root: failure === "moved root" ? seed.root + "/moved" : seed.root };
+        });
+        await store.transact((s: any) => s.uploads = [...blocked, reachable]);
+        advance(UPLOAD_LIFETIME + 1);
+        await app.uploads.prune();
+        expect(await Bun.file(path).exists()).toBe(true);
+        expect(attempted).not.toContain(reachableId);
+        advance(60001);
+        await app.uploads.prune();
+        expect(await Bun.file(path).exists()).toBe(false);
+        expect(attempted).toContain(reachableId);
+        expect((await store.read()).uploads).toHaveLength(16);
+      }, transport);
+    } finally { await runner.close(); }
+  });
+}
