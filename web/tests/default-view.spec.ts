@@ -5,7 +5,7 @@ const state = { version: 1, revision: 1, machines: [{ id: "local", name: "Comput
 const turn = (n: number) => ({ id: `turn-${n}`, entries: [{ id: `user-${n}`, role: "user", text: `Request ${n}: Review this saved message.` }, { id: `reply-${n}`, role: "assistant", text: `Reply ${n}: The saved response remains readable.\n${"The next step is ready. ".repeat(6)}` }] });
 
 async function setup(page: Page, preference: string | null = null, deepLink = false, blockedStorage = false) {
-  const model = { data: Array.from({ length: 20 }, (_, i) => turn(i)), reads: [] as string[], calls: [] as { path: string; body: any }[], sockets: [] as WebSocketRoute[] };
+  const model = { data: Array.from({ length: 20 }, (_, i) => turn(i)), reads: [] as string[], calls: [] as { path: string; body: any }[], watches: new Map<WebSocketRoute, { terminalId: string; watchId: string }>() };
   let prompt: any = { id: "approval", kind: "approval", options: [{ id: "yes", label: "Yes, proceed", keys: ["enter"] }, { id: "no", label: "No, cancel", keys: ["down", "enter"] }] };
   await page.addInitScript(({ preference, blockedStorage }) => {
     localStorage.setItem("herdr-phone.device", "test-device-token");
@@ -18,7 +18,14 @@ async function setup(page: Page, preference: string | null = null, deepLink = fa
     }
   }, { preference, blockedStorage });
   const screen = (id = "t1") => ({ type: "screen", terminal: { ...terminal, id }, text: "The live terminal is ready.", complete: true, screenId: prompt?.id || "screen", prompt });
-  await page.routeWebSocket("**/api/ws", ws => { model.sockets.push(ws); ws.send(JSON.stringify({ type: "state", state })); ws.onMessage(() => {}); });
+  await page.routeWebSocket("**/api/ws", ws => {
+    ws.send(JSON.stringify({ type: "state", state }));
+    ws.onMessage(raw => {
+      const frame = JSON.parse(String(raw));
+      if (frame.type === "watch") model.watches.set(ws, frame);
+      else if (frame.type === "unwatch") model.watches.delete(ws);
+    });
+  });
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/state") return route.fulfill({ json: state });
@@ -32,9 +39,9 @@ async function setup(page: Page, preference: string | null = null, deepLink = fa
   });
   await page.goto(deepLink ? "/#terminal=remote%2Ft2" : "/");
   if (!deepLink) await page.getByRole("button", { name: "W Workbench", exact: true }).tap();
-  return { model, publishMenu: () => {
-    prompt = { id: "menu", kind: "menu", options: [{ id: "quick", label: "Quick option", keys: ["enter"] }] };
-    for (const ws of model.sockets) ws.send(JSON.stringify({ type: "screen", terminalId: "t1", cols: 100, rows: 30, text: "Choose an option.", screenId: prompt.id, prompt }));
+  return { model, publishPrompt: (next: any) => {
+    prompt = next;
+    for (const [ws, watch] of model.watches) ws.send(JSON.stringify({ type: "screen", ...watch, cols: 100, rows: 30, text: "Choose an option.", screenId: prompt.id, prompt }));
   } };
 }
 async function conversation(page: Page) {
@@ -72,7 +79,7 @@ test("remote deep link and tab changes open saved messages without a discovery t
 });
 
 test("default Conversation follows live replies, preserves scroll-up and supports prompt/menu/keys", async ({ page }) => {
-  const { model, publishMenu } = await setup(page);
+  const { model, publishPrompt } = await setup(page);
   await conversation(page);
   const host = page.locator(".conversation");
   model.data.push(turn(20));
@@ -99,7 +106,7 @@ test("default Conversation follows live replies, preserves scroll-up and support
   await page.getByRole("button", { name: "Yes, proceed", exact: true }).tap();
   await expect.poll(() => model.calls.length).toBe(1);
   expect(model.calls[0].body).toEqual({ promptId: "approval", optionId: "yes" });
-  publishMenu();
+  publishPrompt({ id: "menu", kind: "menu", options: [{ id: "quick", label: "Quick option", keys: ["enter"] }] });
   await page.getByRole("button", { name: "Quick option", exact: true }).tap();
   await expect.poll(() => model.calls.length).toBe(2);
   expect(model.calls[1].body).toEqual({ promptId: "menu", optionId: "quick" });
@@ -111,6 +118,44 @@ test("default Conversation follows live replies, preserves scroll-up and support
     await host.getByRole("button", { name: "Latest messages" }).tap();
     await page.screenshot({ path: process.env.DEFAULT_VIEW_SHOT.replace(".png", `-${test.info().project.name}.png`) });
   }
+});
+
+test("Conversation follows layout changes but preserves native scroll-up before its event", async ({ page }) => {
+  const { model, publishPrompt } = await setup(page);
+  await conversation(page);
+  await expect(page.getByRole("button", { name: "Yes, proceed", exact: true })).toBeVisible();
+  await expect.poll(() => model.watches.size).toBe(1);
+  const host = page.locator(".conversation");
+  const gap = () => host.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight);
+  await expect.poll(gap).toBeLessThan(2);
+  publishPrompt({ id: "many", kind: "menu", options: Array.from({ length: 10 }, (_, i) => ({ id: `choice-${i}`, label: `Setting ${i}: keep this choice for future sessions`, keys: ["enter"] })) });
+  await expect(page.locator("#approvals button")).toHaveCount(10);
+  await expect.poll(gap).toBeLessThan(2);
+  const height = await host.evaluate(el => el.scrollHeight);
+  // A late font can grow the list without changing the panel's own dimensions.
+  await host.evaluate(el => { el.style.fontSize = "16px"; });
+  await expect.poll(() => host.evaluate(el => el.scrollHeight)).toBeGreaterThan(height);
+  await expect.poll(gap).toBeLessThan(2);
+  await host.evaluate(el => el.addEventListener("scroll", event => event.stopImmediatePropagation(), { capture: true }));
+  const box = await host.boundingBox();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.wheel(0, -600);
+  await expect.poll(gap).toBeGreaterThan(300);
+  const prior = await host.evaluate(async el => {
+    let previous = el.scrollTop, stable = 0;
+    for (let frame = 0; frame < 120; frame++) {
+      await new Promise(requestAnimationFrame);
+      const current = el.scrollTop;
+      stable = Math.abs(current - previous) < 0.5 ? stable + 1 : 0;
+      if (stable >= 4) return current;
+      previous = current;
+    }
+    throw new Error("Native scroll did not settle");
+  });
+  publishPrompt({ id: "small", kind: "menu", options: [{ id: "keep", label: "Keep current setting", keys: ["enter"] }] });
+  await expect(page.getByRole("button", { name: "Keep current setting", exact: true })).toBeVisible();
+  expect(Math.abs(await host.evaluate(el => el.scrollTop) - prior)).toBeLessThan(2);
+  await expect(host.getByRole("button", { name: "Latest messages" })).toBeVisible();
 });
 
 test("unavailable preference storage still opens Conversation and permits terminal access", async ({ page }) => {
