@@ -118,10 +118,11 @@ async function setup(page: Page) {
   };
 }
 
-test("200-column screen is readable by default without horizontal page scroll", async ({
+test("Read is one tap away and fits a 200-column screen without horizontal page scroll", async ({
   page,
 }) => {
   await setup(page);
+  await page.getByRole("button", { name: "Show readable text", exact: true }).tap();
   const effectiveFont = await page.evaluate(() => {
     const read = document.querySelector<HTMLElement>(".terminal-read");
     if (read)
@@ -224,6 +225,7 @@ test.describe("screen scrolling", () => {
     page,
   }) => {
     const mock = await setup(page);
+    await page.getByRole("button", { name: "Show readable text", exact: true }).tap();
     const viewport = page.locator(".terminal-viewport");
     const read = page.locator(".terminal-read");
     await expect(read).toBeVisible();
@@ -371,12 +373,13 @@ test.describe("screen scrolling", () => {
   });
 });
 
-test("mirror toggle preserves the desktop grid and permits browser pinch zoom", async ({
+test("Mirror is the default, fits the phone width and permits browser pinch zoom", async ({
   page,
 }) => {
   const { writes } = await setup(page);
+  await expect(page.locator(".terminal-viewport")).toHaveAttribute("data-view", "mirror");
   const toggle = page.getByRole("button", {
-    name: "Show desktop mirror",
+    name: "Show readable text",
     exact: true,
   });
   expect(
@@ -388,9 +391,12 @@ test("mirror toggle preserves the desktop grid and permits browser pinch zoom", 
       });
     }),
   ).toBe(true);
-  await toggle.tap();
   await expect(page.locator(".terminal-canvas")).toBeVisible();
   await expect(page.locator(".terminal-read")).toBeHidden();
+  await expect.poll(() => page.locator(".terminal-viewport").evaluate((el) =>
+    Math.abs(el.querySelector(".xterm-screen")!.getBoundingClientRect().width - (el.clientWidth - 24)),
+  )).toBeLessThan(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await expect(page.locator(".terminal-info")).toContainText("200 × 120");
   await expect(page.locator(".xterm-accessibility-tree")).toContainText(
     "Earlier output 1:",
@@ -435,7 +441,7 @@ test("mirror toggle preserves the desktop grid and permits browser pinch zoom", 
   const mirrorCapture = await page.screenshot(
     process.env.WEB_CAPTURE_DIR
       ? {
-          path: `${process.env.WEB_CAPTURE_DIR}/terminal-mirror-${test.info().project.name}.png`,
+          path: `${process.env.WEB_CAPTURE_DIR}/terminal-mirror-default-${test.info().project.name}.png`,
         }
       : {},
   );
@@ -475,4 +481,43 @@ test("mirror toggle preserves the desktop grid and permits browser pinch zoom", 
         body: { promptId: "approval", optionId: "yes" },
       },
     ]);
+});
+
+test("terminal view choice survives reloads on this device", async ({ page }) => {
+  await setup(page);
+  const viewport = page.locator(".terminal-viewport");
+  await page.getByRole("button", { name: "Show readable text", exact: true }).tap();
+  await expect(viewport).toHaveAttribute("data-view", "read");
+  await page.reload();
+  await expect(viewport).toHaveAttribute("data-view", "read");
+  await expect(page.locator(".terminal-read")).toBeVisible();
+  await page.getByRole("button", { name: "Show desktop mirror", exact: true }).tap();
+  await page.reload();
+  await expect(viewport).toHaveAttribute("data-view", "mirror");
+  await expect(page.locator(".terminal-canvas")).toBeVisible();
+});
+
+test("unavailable preference storage still allows view changes", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    const get = Storage.prototype.getItem;
+    const set = Storage.prototype.setItem;
+    Storage.prototype.getItem = function (key) {
+      if (key === "herdr-phone.terminal-view") throw new Error("Storage unavailable");
+      return get.call(this, key);
+    };
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "herdr-phone.terminal-view") throw new Error("Storage unavailable");
+      return set.call(this, key, value);
+    };
+  });
+  await setup(page);
+  const viewport = page.locator(".terminal-viewport");
+  await expect(viewport).toHaveAttribute("data-view", "mirror");
+  await page.getByRole("button", { name: "Show readable text", exact: true }).tap();
+  await expect(page.locator(".terminal-read")).toBeVisible();
+  await page.getByRole("button", { name: "Show desktop mirror", exact: true }).tap();
+  await expect(page.locator(".terminal-canvas")).toBeVisible();
+  expect(errors).toEqual([]);
 });
