@@ -120,10 +120,10 @@ for (const view of ["terminal", "conversation"]) test(`${view} keeps safe areas,
     document.documentElement.style.setProperty("--app-safe-top", "20px");
     document.documentElement.style.setProperty("--app-safe-bottom", "30px");
   });
-  await viewport(page, 440, 20);
-  await checkLayout(page, 440, 20, 20);
+  await viewport(page, 400, 20);
+  await checkLayout(page, 400, 20, 20);
   const content = page.locator(view === "terminal" ? ".terminal-viewport" : ".conversation");
-  expect(await content.evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(20);
+  expect(await content.evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(32);
   const remove = page.getByRole("button", { name: "Remove note.txt", exact: true });
   await remove.tap();
   await expect(page.locator(".attachment")).toHaveCount(0);
@@ -131,7 +131,7 @@ for (const view of ["terminal", "conversation"]) test(`${view} keeps safe areas,
   await page.getByRole("button", { name: "Choice 10 with a longer description", exact: true }).tap();
   await expect.poll(() => actions.length).toBe(1);
   expect(actions[0]).toEqual({ promptId: "menu", optionId: "option-9" });
-  await checkLayout(page, 440, 20, 20);
+  await checkLayout(page, 400, 20, 20);
   await viewport(page, 844, 0);
   await checkLayout(page, 844, 0, 20, 30);
 });
