@@ -367,6 +367,7 @@ export function start(
         ws.close(4001, "Device revoked");
       else {
         ws.data.connected = false;
+        ws.data.revision = undefined;
         ws.send(JSON.stringify({ type: "connection", connected: false }));
       }
     } finally {
@@ -383,6 +384,7 @@ export function start(
             state.at = 0;
             for (const ws of sockets) {
               ws.data.connected = false;
+              ws.data.revision = undefined;
               ws.send(JSON.stringify({ type: "connection", connected: false }));
             }
           },

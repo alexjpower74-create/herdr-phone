@@ -78,6 +78,9 @@ test("corruption fails closed, duplicate labels require explicit id, throttle pe
 });
 class Mock {
   calls: any[] = [];
+  activeKeys = 0;
+  maxActiveKeys = 0;
+  completedKeys = 0;
   async call(method: string, p: any = {}) {
     this.calls.push({ method, p });
     if (method === "hello") return { generation: 1 };
@@ -124,7 +127,11 @@ class Mock {
       return { address: p.terminal, state: "live", cols: 80, rows: 24 };
     if (method === "terminal.read") return { text: "screen", complete: true };
     if (method === "terminal.keys") {
+      this.activeKeys++;
+      this.maxActiveKeys = Math.max(this.maxActiveKeys, this.activeKeys);
       await Bun.sleep(15);
+      this.activeKeys--;
+      this.completedKeys++;
       return { turn: 1 };
     }
   }
@@ -186,6 +193,8 @@ test("HTTP rejects absent/revoked tokens, wrong origins and URL credentials; inp
         }),
       ),
     );
+    expect(core.maxActiveKeys).toBe(1);
+    expect(core.completedKeys).toBe(2);
     expect(
       core.calls
         .filter((c) => c.method === "terminal.keys")
