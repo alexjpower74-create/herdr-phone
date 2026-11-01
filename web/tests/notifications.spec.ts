@@ -381,3 +381,51 @@ test("browser permission revoked while away clears enabled on recheck", async ({
     page.getByRole("button", { name: "Turn off notifications", exact: true }),
   ).toBeEnabled();
 });
+
+test("expired send-test subscription409 clears enabled until rechecked", async ({
+  page,
+}) => {
+  await setup(page, { saved: true, browser: true, permission: "granted" });
+  await expect(toggle(page)).toHaveAttribute("aria-checked", "true");
+  await page.route("**/api/push/test", (route) =>
+    route.fulfill({
+      status: 409,
+      json: {
+        error: {
+          code: "subscription_required",
+          message: "Enable notifications first.",
+        },
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Send test", exact: true }).tap();
+  await expect(toggle(page)).toHaveAttribute("data-state", "unknown");
+  await expect(page.getByRole("dialog").getByRole("status")).toContainText(
+    "Enable notifications first",
+  );
+  await expect(
+    page.getByRole("button", { name: "Send test", exact: true }),
+  ).toBeDisabled();
+});
+
+test("failed initial inspection on reopened settings never claims enabled", async ({
+  page,
+}) => {
+  const control = await setup(page, {
+    saved: true,
+    browser: true,
+    permission: "granted",
+  });
+  await expect(toggle(page)).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("button", { name: "×", exact: true }).tap();
+  control.setFail("/api/push/subscription");
+  await page.getByRole("button", { name: "•••" }).tap();
+  await expect(page.getByRole("dialog").getByRole("status")).toContainText(
+    "Connection failed",
+  );
+  await expect(toggle(page)).toHaveAttribute("data-state", "unknown");
+  await expect(toggle(page)).toBeDisabled();
+  control.setFail("");
+  await page.getByRole("button", { name: "Check again" }).tap();
+  await expect(toggle(page)).toHaveAttribute("aria-checked", "true");
+});
