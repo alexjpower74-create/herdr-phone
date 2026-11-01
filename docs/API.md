@@ -141,6 +141,7 @@ type ConversationPage = {
   reason?: "not_configured" | "not_found" | "ambiguous" | "offline";
   session: string | null; // opaque identity, never a filesystem path
   revision: string; // changes when saved content changes
+  warnings?: Array<"long_output_trimmed" | "scan_limited">;
   turns: Array<{
     id: string;
     entries: Array<{
@@ -161,7 +162,7 @@ and turn IDs allow the client to merge refreshed latest pages without duplicatio
 The Conversation view polls the latest page while visible, follows new content
 only while already at the bottom, and preserves its visible anchor when older
 pages prepend. Changing terminals or sessions discards pending responses. A stale
-cursor after session replacement or file rewrite returns 409 `conversation_changed`;
+cursor after session replacement, truncation or a detected rewrite returns 409 `conversation_changed`;
 an invalid cursor returns 400 `invalid_cursor`. Unavailable history returns an
 empty page with an explicit reason; terminal controls remain available.
 
@@ -196,12 +197,35 @@ noninteractive SSH to the configured alias and a transient Python 3 reader sent
 over stdin; nothing is installed or written remotely. Local reads use the same
 read-only resolver. Neither path attaches to, sends input to, scrolls or resizes
 the terminal. Python 3 and SSH are runtime prerequisites for this optional source.
-Reads are bounded to 128 MiB per file, 4 MiB per JSONL record and 2 MiB of text
-per page; exceeding these limits returns 413 `conversation_too_large` rather
-than silently dropping messages. At most four readers run concurrently; excess
-requests return 429 `conversation_busy`. A reader timeout returns 503. Unchanged
-latest-page polls reuse the parsed result after verifying file and process
-identity. Device revocation is checked again before returning a completed read.
+There is no total-file size cap. The reader seeks backwards from the saved end
+for the latest page, and from an opaque byte-offset cursor for older pages; it
+does not scan or hash the whole transcript for each request. Each read examines
+a bounded window of at most 8 MiB, decodes records up to 4 MiB and returns at most
+2 MiB of text. A byte-limited page can contain fewer than 50 turns and continues
+through `nextCursor`, including when the window contains no displayable messages.
+Oversized records or displayed text are trimmed or skipped with the visible
+notice `[long output trimmed]` (`long_output_trimmed`). `scan_limited` tells the
+client that older messages remain beyond the current read window. Neither case
+is a whole-conversation failure. If a turn spans page boundaries, entry identities
+allow its older content to be prepended without replacing newer text or duplicating
+entries. Incomplete final records are never presented as complete messages.
+
+Cursors bind the terminal/process/session, file identity, snapshot extent and
+bounded content guards around the read boundaries. They reject truncation,
+replacement, same-size modification and mismatched guards while accepting an
+ordinary append. They are not a full-file integrity checksum: a rewrite confined
+to unexamined bytes combined with an append cannot be detected without reading
+those bytes. Readers recheck the process binding after file IO.
+
+At most four readers run concurrently; excess requests return 429
+`conversation_busy`. A reader timeout returns 503 `conversation_timeout`;
+configuration, discovery or reader failures use 503 `conversation_unavailable`.
+An exceptional response-size failure returns 413 `conversation_too_large`.
+The phone distinguishes these errors from `not_found`, `not_configured`,
+`ambiguous` and `offline`; it never describes a size/configuration/reader failure
+as a lost connection. Unchanged latest-page polls reuse the parsed result after
+verifying file and process identity. Device revocation is checked again before
+returning a completed read.
 
 `POST /api/terminals/:id/keys`, body `{ "keys": ["shift+tab"] }`, returns
 `{ "ok": true }` after core acknowledgement. Supported bar names are

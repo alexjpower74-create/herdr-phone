@@ -94,3 +94,11 @@ QA worktree, both supported transcript schemas, explicit failure controls, and
 real WebKit scrolling from the newest page to the first message at 390×844.
 Disposable processes and helper tabs occupy a separate test space and are closed
 when finished. Production files and panes remain untouched.
+
+Large transcripts use bounded reads backwards from the end, with no total-file
+size limit. Older pages continue from opaque byte offsets. Per-record and per-page
+bounds produce visible trimming notices instead of hiding an entire conversation.
+The latest page of a generated 300 MiB transcript must load in under 300 ms on
+the verification host, and paging must reach its first message. Error messages
+distinguish absent history, offline machines and reader failures. The same path
+is verified read-only on an existing large transcript, without terminal input.
