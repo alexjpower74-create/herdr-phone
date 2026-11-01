@@ -83,3 +83,32 @@ test("second approval requires a current blocked command dialog and exact active
     expect(detectPrompt(stale, "blocked", "approval-b")).toBeNull();
   expect(detectPrompt(text, "idle", "approval-b")).toBeNull();
 });
+test("model switch confirmation requires exact current cache warning and matching target", async () => {
+  const text = await fixture("model-confirm-b");
+  const prompt = detectPrompt(text, "done", "confirmation");
+  expect(prompt?.kind).toBe("menu");
+  expect(prompt?.options.map((option) => option.label)).toEqual([
+    "Yes, switch to Model A (default)",
+    "No, go back",
+  ]);
+  expect(prompt?.options[0].keys).toEqual(["enter"]);
+  expect(prompt?.options[1].keys).toEqual(["down", "enter"]);
+  for (const status of ["idle", "working", "blocked", "unknown"])
+    expect(detectPrompt(text, status, "confirmation")).toBeNull();
+  for (const stale of [
+    text + "\nChanged model.",
+    text.replace(
+      "Your next response will be slower and use more tokens",
+      "Continue?",
+    ),
+    text.replace(
+      "This conversation is cached for the current model.",
+      "An example conversation.",
+    ),
+    text.replace("Yes, switch to Model A", "Yes, switch to Model B"),
+    text.replace("  ❯ 1.", "    1."),
+    text.replace("    2.", "  ❯ 2."),
+  ])
+    expect(detectPrompt(stale, "done", "confirmation")).toBeNull();
+  expect(detectPrompt(text, "done", "confirmation", false)).toBeNull();
+});
