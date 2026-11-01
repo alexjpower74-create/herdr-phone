@@ -159,6 +159,7 @@ export class Snapshot {
                   status: { state: t.status },
                   cols: t.cols,
                   rows: t.rows,
+                  cwd: s.cwd,
                 });
     await Promise.all(
       machines

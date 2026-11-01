@@ -20,12 +20,28 @@ export function detectPrompt(
   while (lines.length && !lines.at(-1)!.trim()) lines.pop();
   let kind: Prompt["kind"];
   let heading = -1;
+  let family: "a" | "b" = "a";
   for (let i = lines.length - 1; i >= 0; i--) {
     if (
       /^\s*Would you like to run the following command\?\s*$/.test(lines[i])
     ) {
       heading = i;
       kind = "approval";
+      break;
+    }
+    if (
+      /^\s*Do you want to proceed\?\s*$/.test(lines[i]) &&
+      lines.slice(0, i).some((line) => /^\s*Bash command\s*$/.test(line))
+    ) {
+      heading = i;
+      kind = "approval";
+      family = "b";
+      break;
+    }
+    if (/^\s*Select model\s*$/.test(lines[i])) {
+      heading = i;
+      kind = "menu";
+      family = "b";
       break;
     }
     if (/^\s*Select Model and Effort\s*$/.test(lines[i])) {
@@ -41,15 +57,43 @@ export function detectPrompt(
   let footer = false;
   let started = false;
   for (const line of block) {
-    const match = line.match(/^\s*([›❯>])?\s*(\d+)\.\s+(.+)$/);
+    const match = line.match(/^\s*([›❯>↓])?\s*(\d+)\.\s+(.+)$/);
     if (match) {
       if (footer || Number(match[2]) !== options.length + 1) return null;
-      options.push({ label: match[3].trim(), selected: Boolean(match[1]) });
+      options.push({
+        label: match[3].trim(),
+        selected: Boolean(match[1] && match[1] !== "↓"),
+      });
       started = true;
     } else if (started && line.trim()) {
       if (/^\s*Press enter to confirm or esc to cancel\s*$/i.test(line))
         footer = true;
-      else if (kind! === "menu" && /^\s{3,}\S/.test(line) && !footer) {
+      else if (
+        family === "b" &&
+        kind! === "approval" &&
+        /^\s*Esc to cancel · Tab to amend\s*$/.test(line)
+      )
+        footer = true;
+      else if (
+        family === "b" &&
+        /^\s*Enter to set as default · s to use this session only · Esc to cancel\s*$/.test(
+          line,
+        )
+      )
+        footer = true;
+      else if (
+        family === "b" &&
+        !footer &&
+        (/^\s*… \+\d+ models\s*$/.test(line) ||
+          /^\s*◐ .+ effort \(default\) ←\/→ to adjust\s*$/.test(line))
+      ) {
+        /* Picker metadata. */
+      } else if (
+        family === "a" &&
+        kind! === "menu" &&
+        /^\s{3,}\S/.test(line) &&
+        !footer
+      ) {
         options.at(-1)!.label += " " + line.trim();
       } else return null;
     }
@@ -62,16 +106,21 @@ export function detectPrompt(
     return null;
   if (
     kind! === "approval" &&
+    family === "a" &&
     (!footer || !options.every((o) => /\((?:y|p|esc)\)$/.test(o.label)))
   )
     return null;
+  if (family === "b" && !footer) return null;
   const selected = options.findIndex((o) => o.selected);
   return {
     id: digest(screenId + ":" + kind!),
     kind: kind!,
     options: options.map((option, index) => ({
       id: digest(`${screenId}:${index}:${option.label}`).slice(0, 24),
-      label: option.label,
+      label:
+        family === "b" && kind! === "menu"
+          ? `${option.label} — default for new sessions`
+          : option.label,
       keys: [
         ...Array(Math.abs(index - selected)).fill(
           index < selected ? "up" : "down",

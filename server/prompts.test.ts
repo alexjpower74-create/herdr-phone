@@ -37,3 +37,39 @@ test("ordinary numbered output and historical, truncated or ambiguous dialogs yi
   ] as const)
     expect(detectPrompt(text, status, "screen", complete)).toBeNull();
 });
+test("second picker keeps default scope explicit and rejects unhandled scrolled variants", async () => {
+  const text = await fixture("model-b");
+  const prompt = detectPrompt(text, "idle", "model-b");
+  expect(prompt?.options).toHaveLength(10);
+  expect(
+    prompt?.options.every((option) =>
+      option.label.endsWith("default for new sessions"),
+    ),
+  ).toBe(true);
+  expect(prompt?.options[9].keys).toEqual([...Array(9).fill("down"), "enter"]);
+  expect(
+    detectPrompt(text.replace("❯ 1.", "❯ 2."), "idle", "model-b"),
+  ).toBeNull();
+  expect(detectPrompt(text + "\nNew task ready", "idle", "model-b")).toBeNull();
+  expect(
+    detectPrompt(
+      text.replace("Enter to set as default", "Confirm"),
+      "idle",
+      "model-b",
+    ),
+  ).toBeNull();
+});
+test("second approval requires a current blocked command dialog and exact active footer", async () => {
+  const text = await fixture("approval-b");
+  const prompt = detectPrompt(text, "blocked", "approval-b");
+  expect(prompt?.kind).toBe("approval");
+  expect(prompt?.options.map((option) => option.label)).toEqual(["Yes", "No"]);
+  expect(prompt?.options[1].keys).toEqual(["down", "enter"]);
+  for (const stale of [
+    text + "\nCommand complete",
+    text.replace("Bash command", "Task notes"),
+    text.replace("Esc to cancel · Tab to amend", ""),
+  ])
+    expect(detectPrompt(stale, "blocked", "approval-b")).toBeNull();
+  expect(detectPrompt(text, "idle", "approval-b")).toBeNull();
+});

@@ -1,0 +1,18 @@
+   Select model
+   Switch between assistant models. Your pick becomes the default for new sessions. For other/previous model names, specify with --model.
+
+   ❯ 1.  Default (recommended) ✔  Model A · Best for everyday, complex tasks
+     2.  Model A                 For complex work and everyday tasks
+     3.  Model B                For your toughest challenges
+     4.  Model C               Most efficient for simpler tasks
+     5.  Model D                Fastest for quick answers
+     6.  Model E                Fastest for quick answers
+     7.  Model F                 Efficient for routine tasks
+     8.  Model G                   Best for everyday, complex tasks
+     9.  Model H                  Most capable for your hardest and longest-running tasks
+   ↓ 10. Model I                 Best for everyday, complex tasks
+      … +3 models
+
+   ◐ Medium effort (default) ←/→ to adjust
+
+   Enter to set as default · s to use this session only · Esc to cancel

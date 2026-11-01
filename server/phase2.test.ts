@@ -241,20 +241,27 @@ test("metadata follows live foreground cwd and shared qualified color names", as
   const old = process.env.HERDR_PHONE_SHARED;
   process.env.HERDR_PHONE_SHARED = file;
   const calls: any[] = [];
+  let offline = false;
   const core = {
     async call(method: string, params: any = {}) {
       calls.push({ method, params });
       if (method === "terminal.list")
         return {
-          terminals: ["t1", "remote/t1"].map((address) => ({
-            address,
-            state: "live",
-            cwd: "/old",
-            foreground: { cwd: "/worktrees/feature" },
-          })),
+          terminals: (offline ? ["t1"] : ["t1", "remote/t1"]).map(
+            (address) => ({
+              address,
+              state: "live",
+              cwd: "/old",
+              foreground: { cwd: "/worktrees/feature" },
+            }),
+          ),
         };
       if (method === "machine.list")
-        return { machines: [{ name: "remote", state: "connected" }] };
+        return {
+          machines: [
+            { name: "remote", state: offline ? "unreachable" : "connected" },
+          ],
+        };
       if (method === "doc.get")
         return {
           value: {
@@ -297,6 +304,11 @@ test("metadata follows live foreground cwd and shared qualified color names", as
     ).toBe(true);
     await snapshot.get(true);
     expect(calls.filter((c) => c.method === "machine.exec")).toHaveLength(2);
+    offline = true;
+    const retained = await snapshot.get(true);
+    expect(retained.spaces[1].cwd).toBe("/worktrees/feature");
+    expect(retained.spaces[1].repo).toBe("parent");
+    expect(retained.spaces[1].branch).toBe("feature");
   } finally {
     if (old === undefined) delete process.env.HERDR_PHONE_SHARED;
     else process.env.HERDR_PHONE_SHARED = old;
