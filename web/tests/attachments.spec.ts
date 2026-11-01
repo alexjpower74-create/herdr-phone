@@ -81,7 +81,6 @@ test("file-only Enter uploads exact bytes sequentially then sends IDs once", asy
   await expect(page.locator(".terminal-canvas .xterm-rows")).toContainText("Review the current choice");
   // WebKit's request interception omits multipart file payloads. Bypass interception
   // for this proof and compare bytes actually received by the loopback HTTP fixture.
-  await page.unroute("**/api/**");
   await page.route("**/api/terminals/*/send", async route => {
     model.sends.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
     await route.fulfill({ json: { ok: true } });
