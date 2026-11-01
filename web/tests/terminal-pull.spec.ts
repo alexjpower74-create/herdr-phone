@@ -13,6 +13,8 @@ async function start(page: Page) {
   await page.getByRole('button', { name: 'Terminal view', exact: true }).tap();
   await page.evaluate(() => {
     (window as any).touchTrust = [];
+    (window as any).touchMoves = [];
+    document.addEventListener("touchmove", e => (window as any).touchMoves.push(e.defaultPrevented));
     for (const name of ['touchstart', 'touchmove', 'touchend']) document.addEventListener(name, e => (window as any).touchTrust.push(e.isTrusted), { capture: true });
   });
   const box = await page.locator('.terminal-viewport').boundingBox();
@@ -27,6 +29,8 @@ test('deliberate top pull reveals earlier messages and returns to newest in Mirr
   const { x, y, model } = await start(page);
   const watches = [...model.watches.values()];
   await page.locator('.terminal-input').fill('Keep this draft');
+  await page.locator('input[type=file]').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('A saved attachment') });
+  await page.locator('.terminal-input').blur();
   await expect(page.getByText('Earlier messages are in Conversation ↑', { exact: true })).toBeVisible();
   for (const mode of ['mirror', 'read']) {
     if (mode === 'read') await page.getByRole('button', { name: 'Show readable text' }).tap();
@@ -47,6 +51,11 @@ test('deliberate top pull reveals earlier messages and returns to newest in Mirr
   expect(await page.evaluate(() => (window as any).touchTrust)).toEqual(expect.arrayContaining([true]));
   expect(await page.evaluate(() => (window as any).touchTrust.every(Boolean))).toBe(true);
   await expect(page.locator('.terminal-input')).toHaveValue('Keep this draft');
+  await expect(page.getByText('sample.txt', { exact: true })).toBeVisible();
+  await expect(page.locator('.terminal-input')).not.toBeFocused();
+  expect(await page.evaluate(() => (window as any).touchMoves.some(Boolean))).toBe(true);
+  await expect(page.locator('.keybar button')).toHaveCount(6);
+  await expect(page.getByRole('button', { name: 'Yes, proceed', exact: true })).toBeVisible();
   expect(model.calls).toEqual([]); expect([...model.watches.values()]).toEqual(watches);
 });
 for (const [name, dx, dy, cancel] of [['short', 0, 25, false], ['horizontal', 100, 20, false], ['upward', 0, -25, false], ['cancelled', 0, 100, true]] as const) test(`${name} gesture stays in Terminal`, async ({ page }) => {
@@ -61,5 +70,59 @@ test('multi-touch cancels pull until all fingers lift', async ({ page }) => {
   await touch(page, 'touchStart', [{ id: 1, x, y: y + 20 }, { id: 2, x: x + 30, y }]);
   await touch(page, 'touchMove', [{ id: 1, x, y: y + 120 }, { id: 2, x: x + 30, y: y + 100 }]);
   await touch(page, 'touchEnd', [{ id: 1, x, y: y + 120 }, { id: 2, x: x + 30, y: y + 100 }]);
+  await expect(page.locator('.terminal-viewport')).toBeVisible();
+});
+
+test('a pull that retreats below threshold does not hand off', async ({ page }) => {
+  const { x, y } = await start(page);
+  await touch(page, 'touchStart', [{ id: 1, x, y }]);
+  await touch(page, 'touchMove', [{ id: 1, x, y: y + 100 }]);
+  await touch(page, 'touchMove', [{ id: 1, x, y: y + 3 }]);
+  await touch(page, 'touchEnd', [{ id: 1, x, y: y + 3 }]);
+  await expect(page.locator('.terminal-viewport')).toBeVisible();
+});
+
+test('zoom metrics reject a single finger pull without preventing native movement', async ({ page }) => {
+  const { x, y } = await start(page);
+  await page.evaluate(() => Object.defineProperty(window.visualViewport!, 'scale', { configurable: true, value: 2 }));
+  await drag(page, x, y);
+  await expect(page.locator('.terminal-viewport')).toBeVisible();
+  expect(await page.evaluate(() => (window as any).touchMoves)).toEqual([false, false, false, false, false]);
+  expect(await page.locator('.terminal-viewport').evaluate(el => getComputedStyle(el).touchAction)).toContain('pinch-zoom');
+});
+
+test('touch beginning in scrollback cannot hand off after reaching the top', async ({ page }) => {
+  const { x, y, publishPrompt } = await start(page);
+  publishPrompt({ id: 'long', kind: 'approval', options: [] });
+  // Real wheel positions the scrollable Read view; native WebKit touch panning
+  // is not implemented on this host, so no platform scrolling claim is made.
+  await page.getByRole('button', { name: 'Show readable text' }).tap();
+  await page.evaluate(() => {
+    const read = document.querySelector('.terminal-read')!;
+    read.append(document.createTextNode('\n' + 'Retained terminal line\n'.repeat(100)));
+  });
+  await page.mouse.move(x, y + 100); await page.mouse.wheel(0, 500);
+  await expect.poll(() => page.locator('.terminal-viewport').evaluate(el => el.scrollTop)).toBeGreaterThan(50);
+  await drag(page, x, y);
+  await expect(page.locator('.terminal-viewport')).toBeVisible();
+  expect(await page.evaluate(() => (window as any).touchMoves.every((v: boolean) => !v))).toBe(true);
+});
+
+for (const change of ['view', 'terminal', 'disconnect', 'hidden']) test(`${change} change cancels held pull`, async ({ page }) => {
+  const { x, y, model } = await start(page);
+  await touch(page, 'touchStart', [{ id: 1, x, y }]);
+  await touch(page, 'touchMove', [{ id: 1, x, y: y + 100 }]);
+  if (change === 'view') await page.getByRole('button', { name: 'Show readable text' }).click();
+  if (change === 'terminal') {
+    await page.getByRole('button', { name: 'Review', exact: true }).click();
+    await page.getByRole('button', { name: 'Terminal view', exact: true }).click();
+  }
+  if (change === 'disconnect') for (const ws of model.watches.keys()) ws.close();
+  if (change === 'hidden') await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+  });
+  await touch(page, 'touchEnd', [{ id: 1, x, y: y + 100 }]);
   await expect(page.locator('.terminal-viewport')).toBeVisible();
 });

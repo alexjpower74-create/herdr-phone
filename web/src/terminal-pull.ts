@@ -37,7 +37,7 @@ export class TerminalPull {
     const t = e.touches[0];
     const dx = Math.abs(t.clientX - this.start.x), dy = t.clientY - this.start.y;
     if (t.identifier !== this.start.id || dy < -8 || (dx > 8 && dx > dy / 2) || this.viewport.scrollTop > 1) { this.cancel(); return; }
-    if (dy < 10) return;
+    if (dy < 10) { this.distance = 0; this.label.textContent = this.hint; return; }
     if (!e.cancelable) { this.cancel(); return; }
     e.preventDefault();
     this.consumed = true;
