@@ -418,7 +418,7 @@ test("Mirror is the initial terminal subview, fits the phone width and permits b
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
-  await expect(page.locator(".terminal-info")).toContainText("200 × 120");
+  await expect(page.locator(".terminal-info")).toHaveAttribute("title", /200 × 120/);
   await expect(page.locator(".xterm-accessibility-tree")).toContainText(
     "Earlier output 1:",
   );

@@ -63,9 +63,9 @@ export class Conversation {
     if (this.visible && !document.hidden && this.online) void this.load();
   };
   show(value: boolean, newest = false) {
-    if (newest) { this.following = true; this.restorePosition(); }
     this.visible = value;
     this.host.hidden = !value;
+    if (newest) { this.following = true; this.restorePosition(); }
     this.cancel();
     if (value && this.online) void this.load();
     else if (value) this.failure("Conversation is offline. Reconnect and retry.");
