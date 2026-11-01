@@ -624,7 +624,7 @@ function frame(message: Frame) {
       client.cancelPending();
       if (active)
         notice(
-          "Connection lost. Pending input was cancelled; check the terminal before continuing.",
+          "Connection lost. Pending input was cancelled. Delivery may be unknown; drafts retained. Check the terminal before continuing.",
         );
     }
     updateTerminalInfo();
@@ -839,7 +839,7 @@ async function start() {
       connected = value;
       if (!value && active)
         notice(
-          "Connection lost. Pending input was cancelled; check the terminal before continuing.",
+          "Connection lost. Pending input was cancelled. Delivery may be unknown; drafts retained. Check the terminal before continuing.",
         );
       if (changed && !space) home();
       else updateTerminalInfo();

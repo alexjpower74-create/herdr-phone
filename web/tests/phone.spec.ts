@@ -455,9 +455,12 @@ test("500 character compose preserves literal text and sends only on deliberate 
   const { calls } = await setup(page);
   await open(page);
   const input = page.getByLabel("Type to terminal");
-  const text = 'Hello 🙂 café! "quoted" $value <tag> \\ / + = ?\n\t'
-    .repeat(20)
-    .slice(0, 500);
+  const text = Array.from(
+    'Hello 🙂 café! "quoted" $value <tag> \\ / + = ?\n\t'.repeat(20),
+  )
+    .slice(0, 500)
+    .join("");
+  expect(Array.from(text)).toHaveLength(500);
   await input.tap();
   await page.keyboard.insertText(text);
   await expect(input).toHaveValue(text);
@@ -683,7 +686,23 @@ test("all named keybar keys and slash commands use their documented routes", asy
   const { calls } = await setup(page);
   await open(page);
   for (const key of ["shift+tab", "esc", "up", "down", "enter", "ctrl+c"]) {
-    await page.getByRole("button", { name: key, exact: true }).tap();
+    const control = page.getByRole("button", { name: key, exact: true });
+    expect(
+      await control.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return (
+          rect.height >= 44 &&
+          [3, rect.height / 2, rect.height - 3].every((y) => {
+            const hit = document.elementFromPoint(
+              rect.x + rect.width / 2,
+              rect.y + y,
+            );
+            return hit === element || (hit !== null && element.contains(hit));
+          })
+        );
+      }),
+    ).toBe(true);
+    await control.tap();
   }
   await expect
     .poll(() => calls.filter((call) => call.path.endsWith("/keys")).length)
