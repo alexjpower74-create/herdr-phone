@@ -129,17 +129,17 @@ test("Conversation follows layout changes but preserves native scroll-up before 
   const host = page.locator(".conversation");
   const gap = () => host.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight);
   await page.evaluate(() => document.fonts.ready);
-  await expect.poll(gap).toBeLessThan(2);
+  await expect.poll(gap, { timeout: 1000 }).toBeLessThan(2);
   // Keep later polls pending: they must not rescue a missing resize handler.
   model.holdLatest = true;
   publishPrompt({ id: "many", kind: "menu", options: Array.from({ length: 10 }, (_, i) => ({ id: `choice-${i}`, label: `Setting ${i}: keep this choice for future sessions`, keys: ["enter"] })) });
   await expect(page.locator("#approvals button")).toHaveCount(10);
-  await expect.poll(gap).toBeLessThan(2);
+  await expect.poll(gap, { timeout: 1000 }).toBeLessThan(2);
   const height = await host.evaluate(el => el.scrollHeight);
   // A late font can grow the list without changing the panel's own dimensions.
   await host.evaluate(el => { el.style.fontSize = "16px"; });
   await expect.poll(() => host.evaluate(el => el.scrollHeight)).toBeGreaterThan(height);
-  await expect.poll(gap).toBeLessThan(2);
+  await expect.poll(gap, { timeout: 1000 }).toBeLessThan(2);
   await host.evaluate(el => el.addEventListener("scroll", event => event.stopImmediatePropagation(), { capture: true }));
   const box = await host.boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
