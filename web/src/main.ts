@@ -24,8 +24,15 @@ let currentText = "",
   screenGeneration = 0;
 let appEpoch = 0;
 type TerminalView = "read" | "mirror";
-const terminalViews = new Map<string, TerminalView>();
-let terminalView: TerminalView = "read",
+const VIEW_KEY = "herdr-phone.terminal-view";
+function preferredTerminalView(): TerminalView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "read" ? "read" : "mirror";
+  } catch {
+    return "mirror";
+  }
+}
+let terminalView: TerminalView = preferredTerminalView(),
   followingNewest = true,
   readPosition = 0,
   readSource: string | undefined;
@@ -281,7 +288,7 @@ function showTerminal(desired?: string) {
   const viewToggle = button(
     "Mirror",
     () => {
-      setTerminalView(terminalView === "read" ? "mirror" : "read");
+      setTerminalView(terminalView === "read" ? "mirror" : "read", true);
     },
     "view-toggle",
   );
@@ -307,7 +314,6 @@ function showTerminal(desired?: string) {
     root.append(element("p", "empty", "This tab has no running terminal."));
     return;
   }
-  terminalView = terminalViews.get(active.id) ?? "read";
   followingNewest = true;
   readPosition = 0;
   readSource = undefined;
@@ -431,14 +437,20 @@ function showTerminal(desired?: string) {
     })
     .catch((e) => notice((e as Error).message));
 }
-function setTerminalView(view: TerminalView) {
+function setTerminalView(view: TerminalView, remember = false) {
   const viewport = root.querySelector<HTMLElement>(".terminal-viewport"),
     canvas = root.querySelector<HTMLElement>(".terminal-canvas"),
     read = root.querySelector<HTMLElement>(".terminal-read"),
     toggle = root.querySelector<HTMLButtonElement>(".view-toggle");
   if (!viewport || !canvas || !read || !toggle || !active) return;
   terminalView = view;
-  terminalViews.set(active.id, view);
+  if (remember) {
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // The choice still applies for this session if storage is unavailable.
+    }
+  }
   viewport.dataset.view = view;
   canvas.hidden = view === "read";
   read.hidden = view === "mirror";

@@ -21,7 +21,7 @@ public-safe [home preview](docs/screens/home-webkit.png) uses neutral sample spa
 1. **Home is the Herdr Spaces sidebar.** It has the "Spaces" header, then groups for "This computer" and "mac", each with its online dot. Every space has its coloured letter tile, its name, and a subtitle with the repo and branch. Herdr's own colours, fonts and spacing.
 2. **The + buttons work.** The + next to a machine opens a new space on that machine. The + at the top opens a new space too.
 3. **Tap a space and its first tab opens,** with the other tabs across the top. Tap a tab to switch.
-4. **The tab is the live terminal,** with a readable, soft-wrapped current-screen view by default. It follows the newest output until you scroll up. A tab-header toggle opens the exact desktop grid with pinch zoom. Tapping the screen brings up a compose box. Text stays on the phone until Send or Enter submits the whole message, including punctuation and Unicode. A blocked dialog requires a separate explicit confirmation before sending anyway.
+4. **The tab is the live terminal,** with the exact desktop Mirror fitted to the phone width by default and browser pinch zoom. A tab-header toggle opens Read: readable, soft-wrapped current-screen text that follows the newest output until you scroll up. The last view choice is remembered on the device. Tapping the screen brings up a compose box. Text stays on the phone until Send or Enter submits the whole message, including punctuation and Unicode. A blocked dialog requires a separate explicit confirmation before sending anyway.
 5. **Key bar** above the keyboard:
    - **Shift+Tab**, to cycle modes
    - **Esc**
