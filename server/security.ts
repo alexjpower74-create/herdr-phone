@@ -1,3 +1,4 @@
+import { validUploads, type UploadRecord } from "./upload-manifest";
 import { subscription as validateSubscription } from "./push-subscription";
 import { spawn } from "node:child_process";
 import {
@@ -42,6 +43,7 @@ type State = {
   devices: Device[];
   pair?: { hash: string; expires: number; attempts: number };
   exchanges?: number[];
+  uploads?: UploadRecord[];
 };
 export const publicDevice = ({ id, label, createdAt }: Device) => ({
   id,
@@ -88,6 +90,7 @@ export class Store {
             s.exchanges.some((n: any) => !Number.isFinite(n))))
       )
         throw new Error("Invalid state");
+      if (s.uploads !== undefined && !validUploads(s.uploads)) throw new Error("Invalid uploads");
       for (const d of s.devices)
         if (d.subscription) validateSubscription(d.subscription, 0);
       if (
