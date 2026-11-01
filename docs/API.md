@@ -237,8 +237,9 @@ plain screen text. First data for each observer is:
 
 A reset starts a fresh emulator buffer; subsequent chunks append without resets
 or full-screen replacement. Use a streaming UTF-8 decoder and discard any frame
-for a superseded terminal/watch. Never replay a chunk twice. Desktop size changes
-update only the phone emulator. Raw byte chunks are bounded; flow control uses
+for a superseded terminal/watch. Never replay a chunk twice. A desktop size change closes the affected observation and reconnects for a fresh
+snapshot at the new dimensions. This repairs bytes that may have arrived before
+the size event; it never resizes the desktop. Raw byte chunks are bounded; flow control uses
 CREDIT after bounded delivery, and slow consumers are closed instead of growing
 an unbounded queue. Revocation, unwatch, socket close and observer failure release
 the owned channel/process. Reconnection establishes a fresh observer, not a

@@ -2,7 +2,7 @@
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, writeFile, readFile, rename, rm, mkdir, readdir, copyFile } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rename, rm, mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";

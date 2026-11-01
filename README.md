@@ -58,14 +58,22 @@ or focus. It never contacts a public push provider.
 ## What it does (v1)
 - **Home** is Herdr's Spaces sidebar, with spaces grouped by machine. A + next to each machine opens a new space there.
 - **Tap a space** to open its first tab. The other tabs run across the top.
-- **Each tab opens in Mirror.** The original desktop grid fits the phone width and supports browser pinch zoom. Read is one header tap away: it wraps the current screen, follows new output, and lets you scroll up. Your last view choice is remembered on this device. Compose a message locally, then tap Send or Enter to submit it. The key bar provides Shift+Tab, Esc, the arrows, Enter and ^C without changing the desktop terminal size.
+- **Each tab opens in Mirror.** The live terminal keeps its ANSI colours, fits the phone width and supports browser pinch zoom. Read is one header tap away: it wraps the text and follows new output until you scroll up. Both views begin with about 500 retained history rows and load earlier rows when you reach the top. Your last view choice is remembered on this device. Compose a message locally, then tap Send or Enter to submit it. The key bar provides Shift+Tab, Esc, the arrows, Enter and ^C without changing the desktop terminal size.
 - **Approval and menu buttons** preserve the choices and permission scope shown by recognized dialogs. Slash commands such as `/model` and `/effort` use the compose box; unknown menus remain usable with the key bar.
 - **Pairing** uses a one-time code. Optional notifications tell you when a terminal needs you or finishes; tapping one opens its tab.
 
 Drafts remain separate for each terminal while the page is open. Failed sends
 keep the draft and are never replayed automatically. A blocked terminal shows
 its current dialog before offering a separate “Send anyway” action. Closing
-or reloading the page clears local drafts. See the [terminal preview](docs/screens/terminal-mirror-default-webkit.png) for the controls with neutral sample data.
+or reloading the page clears local drafts. The phone observes output without sending
+resize or focus changes. Older history is limited to what the core retains; a
+full-screen application may keep additional conversation history privately.
+The phone never scrolls that application to retrieve it.
+
+See the [colour preview](docs/screens/terminal-colours-after-webkit.png),
+[history preview](docs/screens/terminal-history-after-webkit.png), and short
+[before/after display recording](docs/screens/terminal-display-before-after.mp4),
+all captured with neutral disposable-terminal output.
 
 ## Notifications
 
