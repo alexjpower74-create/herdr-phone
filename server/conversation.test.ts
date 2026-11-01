@@ -350,7 +350,7 @@ test("reader instruments scan and UTF-8 output budgets across empty giant window
     let previous: any, found = false;
     for (let count = 0; count < 10; count++) {
       const request = { pid: process.pid, cwd: process.cwd(), sources: [{ format: "responses", root }],
-        ...(previous ? { expected: previous, before: previous.next, join: previous.join } : {}) };
+        ...(previous ? { expected: { binding: previous.binding, size: previous.size, fingerprint: previous.fingerprint, guards: previous.guards }, before: previous.next, join: previous.join } : {}) };
       const child = Bun.spawn(["python3", "-", Buffer.from(JSON.stringify(request)).toString("base64")], { stdin: new Blob([script]), stdout: "pipe", stderr: "ignore" });
       const page = await new Response(child.stdout).json();
       expect(await child.exited).toBe(0);
