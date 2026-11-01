@@ -49,14 +49,14 @@ terminals. The browser source and its own checks live under `web/`.
 ## What it does (v1)
 - **Home** is Herdr's Spaces sidebar, with spaces grouped by machine. A + next to each machine opens a new space there.
 - **Tap a space** to open its first tab. The other tabs run across the top.
-- **Each tab is the live terminal.** Compose a message locally, then tap Send or Enter to submit it. The key bar provides Shift+Tab, Esc, the arrows, Enter and ^C without changing the desktop terminal size.
+- **Each tab shows readable terminal text.** The default Read view wraps the current screen, follows new output, and lets you scroll up. Mirror shows the original desktop grid with browser pinch zoom. Compose a message locally, then tap Send or Enter to submit it. The key bar provides Shift+Tab, Esc, the arrows, Enter and ^C without changing the desktop terminal size.
 - **Approval and menu buttons** preserve the choices and permission scope shown by recognized dialogs. Slash commands such as `/model` and `/effort` use the compose box; unknown menus remain usable with the key bar.
 - **Pairing** uses a one-time code. Lock-screen notifications are planned for the next phase.
 
 Drafts remain separate for each terminal while the page is open. Failed sends
 keep the draft and are never replayed automatically. A blocked terminal shows
 its current dialog before offering a separate “Send anyway” action. Closing
-or reloading the page clears local drafts. See the [phone compose preview](docs/screens/compose-webkit.png) for the controls with neutral sample data.
+or reloading the page clears local drafts. See the [readable terminal preview](docs/screens/terminal-readable-webkit.png) for the controls with neutral sample data.
 
 ## Security
 A paired phone can read every terminal and type into it, so treat pairing like a login to your computer. Keep the bridge on a private network such as Tailscale, never the public internet, and revoke a lost device at once.

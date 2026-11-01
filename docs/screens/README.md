@@ -8,6 +8,8 @@ browser layout, not a completed real-phone integration.
   later logo asset update.
 - `compose-webkit.png`: web slice `cf5421c`, showing local message composition
   and bridge-supplied approval buttons with neutral sample data.
+- `terminal-readable-webkit.png`: `0269733`, showing the default 13px Read view
+  of a 200-column screen, wrapped text, collapsed rules and a Mirror toggle.
 
 Desktop reference screenshots remain private because they contain live
 workspace names. Composed input, space creation and current-dialog actions
