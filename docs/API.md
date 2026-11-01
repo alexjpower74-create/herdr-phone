@@ -90,7 +90,7 @@ type Terminal = {
   cols: number;
   rows: number;
 };
-type Program = { id: string; name: string };
+type Program = { id: string; name: string; machineId: string };
 ```
 
 Preserve document space/tab order, local machine first then remote aliases.
@@ -106,7 +106,9 @@ explicit hex color remains valid. Missing repo/branch information is null,
 never fabricated. Cache metadata so
 opening home is not blocked on repeated subprocess or repository scans.
 Read program ids and display names from the installed app's `programs.json`;
-never send launch arguments to the phone.
+never send launch arguments to the phone. Program ids are scoped to `machineId`;
+show only the selected machine’s programs in the creation form. Remote config
+is read through the current core and cached for at most 30 seconds.
 
 ## Terminal display and input
 
@@ -169,8 +171,8 @@ type Prompt = {
 
 Approval detection requires a currently blocked terminal and a recognized
 active approval block at the end of the screen. Menu detection requires a
-recognized active command menu, including its selection marker and navigation
-instructions. Unknown, truncated, historical or ambiguous text yields null;
+recognized active command menu, including its heading, selection marker and
+active end-of-screen structure. Some installed menus omit navigation instructions. Unknown, truncated, historical or ambiguous text yields null;
 the key bar remains available. Preserve the actual option labels, including
 the scope of any remembered permission; never reduce them to a misleading Yes.
 Tests use sanitized real screen structures from both supported terminal UIs,

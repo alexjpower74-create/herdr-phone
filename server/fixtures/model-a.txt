@@ -1,0 +1,9 @@
+  Select Model and Effort                                                       
+                                                                                
+                                                                                
+› 1. Model A (current)  Optimized for assistant. Balance of reasoning quality 
+                              and coding ability.                               
+  2. Model B       Optimized for assistant. Cheaper, faster, but less    
+                              capable.                                          
+  3. Model C            Legacy model. Use when you need compatibility with
+                              older automations.

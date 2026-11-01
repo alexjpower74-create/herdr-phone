@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, hash } from "./security";
 import { frame, Frames, Core } from "./core";
-import { start, inputKeys, coreKeys } from "./index";
+import { start, validateText, coreKeys } from "./index";
 import { Snapshot } from "./state";
 const temp = () => mkdtemp(join(tmpdir(), "phone-test-"));
 test("framed decoder handles every split, coalesced frames and bounded length", () => {
@@ -186,10 +186,10 @@ test("HTTP rejects absent/revoked tokens, wrong origins and URL credentials; inp
     });
     await Promise.all(
       ["A", "B"].map((text) =>
-        fetch(base + "/api/terminals/remote%2Ft1/input", {
+        fetch(base + "/api/terminals/remote%2Ft1/keys", {
           method: "POST",
           headers,
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ keys: [text] }),
         }),
       ),
     );
@@ -209,16 +209,10 @@ test("HTTP rejects absent/revoked tokens, wrong origins and URL credentials; inp
     await rm(dir, { recursive: true, force: true });
   }
 });
-test("input preserves printable Unicode, translates known controls and rejects unknown controls", () => {
-  expect(inputKeys("a🙂\r\n\t\x03")).toEqual([
-    "a",
-    "🙂",
-    "enter",
-    "tab",
-    "ctrl+c",
-  ]);
-  expect(() => inputKeys("\x01")).toThrow();
-  expect(() => inputKeys("x".repeat(4097))).toThrow();
+test("literal text preserves punctuation and Unicode and rejects controls", () => {
+  expect(validateText("A!🙂\n\t")).toBe("A!🙂\n\t");
+  for (const text of ["", "\x01", "\ud800", "x".repeat(4097)])
+    expect(() => validateText(text)).toThrow();
 });
 test("health honestly reports disconnected core", async () => {
   const app = start({
@@ -357,7 +351,7 @@ test("programs expose runnable entries only and repository metadata is real and 
     };
     const s = new Snapshot(c),
       snap = await s.get();
-    expect(snap.programs).toEqual([{ id: "shell", name: "Shell" }]);
+    expect(snap.programs).toEqual([{ id: "shell", name: "Shell", machineId: "local" }]);
     expect(snap.spaces[0]).toMatchObject({
       repo: "project",
       branch: "feature",
@@ -405,7 +399,7 @@ test("null and array JSON bodies are rejected with 400", async () => {
     core: new Mock(),
   });
   try {
-    for (const path of ["/api/pair", "/api/terminals/t1/input"])
+    for (const path of ["/api/pair", "/api/terminals/t1/keys"])
       for (const value of [null, []]) {
         const r = await fetch(`http://127.0.0.1:${app.server.port}` + path, {
           method: "POST",
@@ -506,10 +500,10 @@ let first=true;process.stdin.on('data',data=>{if(first){first=false;process.stdo
 });
 
 test("verified ASCII aliases preserve case and unsupported text is rejected before input", async () => {
-  expect(coreKeys(inputKeys("a B"))).toEqual(["a", "space", "shift+b"]);
-  expect(() => coreKeys(inputKeys("a🙂"))).toThrow();
+  expect(coreKeys(["a", "B"])).toEqual(["a", "shift+b"]);
+  expect(() => coreKeys(["a", "🙂"])).toThrow();
   for (const c of Array.from('!"#$%&()*+:<>?@^_{|}~'))
-    expect(() => coreKeys(inputKeys(c))).toThrow();
+    expect(() => coreKeys([c])).toThrow();
   const dir = await temp(),
     store = new Store(dir),
     core = new Mock();
@@ -517,7 +511,7 @@ test("verified ASCII aliases preserve case and unsupported text is rejected befo
   const app = start({ port: 0, origin: "http://localhost", core, store });
   try {
     const r = await fetch(
-      `http://127.0.0.1:${app.server.port}/api/terminals/t1/input`,
+      `http://127.0.0.1:${app.server.port}/api/terminals/t1/keys`,
       {
         method: "POST",
         headers: {
