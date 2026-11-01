@@ -88,6 +88,9 @@ type Call = { path: string; body: any; auth: string | undefined };
 async function setup(page: Page, paired = true) {
   const calls: Call[] = [];
   const sockets: WebSocketRoute[] = [];
+  let typed = "",
+    menu = false,
+    selection = 0;
   await page.addInitScript((p) => {
     if (p) localStorage.setItem("herdr-phone.device", "test-device-token");
   }, paired);
@@ -136,6 +139,31 @@ async function setup(page: Page, paired = true) {
       });
     }
     if (path === "/api/device") return route.fulfill({ status: 204 });
+    if (path === "/api/terminals/t1/input") typed += body.text;
+    if (path === "/api/terminals/t1/keys") {
+      let screen: string | undefined;
+      if (menu && body.keys.includes("down")) {
+        selection = 1;
+        screen = "Select model\n  Balanced\n› Quick\nUse ↑/↓ and Enter";
+      } else if (menu && body.keys.includes("enter")) {
+        menu = false;
+        screen = `Model: ${selection ? "Quick" : "Balanced"}`;
+      } else if (typed === "/model" && body.keys.includes("enter")) {
+        menu = true;
+        screen = "Select model\n› Balanced\n  Quick\nUse ↑/↓ and Enter";
+      }
+      if (screen)
+        for (const socket of sockets)
+          socket.send(
+            JSON.stringify({
+              type: "screen",
+              terminalId: "t1",
+              cols: 100,
+              rows: 30,
+              text: screen,
+            }),
+          );
+    }
     return route.fulfill({ json: { ok: true } });
   });
   await page.goto("/");
@@ -186,6 +214,11 @@ test("approval and slash menu controls send exact acknowledged keys", async ({
   page,
 }) => {
   const { calls } = await setup(page);
+  let taps = 0;
+  await page.exposeFunction("recordTap", () => taps++);
+  await page.evaluate(() =>
+    document.addEventListener("pointerdown", () => (window as any).recordTap()),
+  );
   await open(page);
   await capture(page, "terminal");
   await page.getByRole("button", { name: "Yes", exact: true }).tap();
@@ -197,6 +230,7 @@ test("approval and slash menu controls send exact acknowledged keys", async ({
   await expect(
     page.getByRole("button", { name: "Yes", exact: true }),
   ).toHaveCount(0);
+  await page.getByLabel("Type to terminal").tap();
   await page.getByLabel("Type to terminal").fill("/model");
   await page.getByRole("button", { name: "enter", exact: true }).tap();
   await page.getByRole("button", { name: "down", exact: true }).tap();
@@ -214,6 +248,15 @@ test("approval and slash menu controls send exact acknowledged keys", async ({
       { keys: ["down"] },
       { keys: ["enter"] },
     ]);
+  await expect(page.locator(".xterm-accessibility-tree")).toContainText(
+    "Model: Quick",
+  );
+  await expect.poll(() => taps).toBe(6);
+  expect(taps).toBeLessThanOrEqual(6);
+  test.info().annotations.push({
+    type: "tap count",
+    description: `${taps} taps to open, approve and choose a model in the mock flow`,
+  });
   expect(
     calls.some((c) => c.path.includes("resize") || c.path.includes("attach")),
   ).toBe(false);
