@@ -230,9 +230,12 @@ or reloading the page clears local drafts. The phone observes output without sen
 resize or focus changes. Mirror and Read show history retained by the core.
 **Conversation** opens saved messages from the current process's transcript,
 including conversations kept privately by full-screen applications. Messages
-load 50 turns at a time back to the beginning, with your messages highlighted
+load up to 50 turns at a time back to the beginning, with your messages highlighted
 and tool calls collapsed to one line. The phone never scrolls the application
-to retrieve them.
+to retrieve them. Large transcripts load in bounded windows backwards from the
+end, without a total-file size limit. Oversized records show a trimming notice;
+older pages continue from where the previous window stopped. Missing history,
+offline machines and reader errors have separate messages.
 
 Conversation sources are optional. Configure their private roots using the
 [conversation API configuration](docs/API.md#conversation-history). Local reads
