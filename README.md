@@ -102,6 +102,8 @@ See the [colour preview](docs/screens/terminal-colours-after-webkit.png),
 all captured with neutral disposable-terminal output.
 The [saved conversation preview](docs/screens/conversation-history-webkit.png)
 shows the first message reached through paged history on a phone.
+The [attachment preview](docs/screens/attachments-webkit.png) shows photo,
+text and PDF selections before Send in the disposable-terminal upload check.
 
 ## Notifications
 

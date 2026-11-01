@@ -237,8 +237,9 @@ support, bounded to 32 million pixels, a 128 MiB pixel cache and 15 seconds.
 Unsupported or invalid content returns 415 `unsupported_file`; missing conversion
 support returns 503 `conversion_unavailable`; size/pixel limits return 413.
 No uploaded content is served as a public URL or interpreted by the bridge.
-Image validation requires ImageMagick; PDF validation requires `pdfinfo` from
-Poppler. These checks run on the bridge before any remote transfer.
+Image validation requires ImageMagick (`magick`, or `convert` and `identify`);
+PDF validation requires `pdfinfo` from Poppler. These checks run on the bridge
+before any remote transfer.
 
 Files are stored on the terminal's machine under
 `~/.cache/herdr-phone/uploads/<date>/`, with generated names, mode 0600 and
@@ -249,7 +250,10 @@ overrides its remote root. No remote installation is needed. Existing files and
 symlinks are never overwritten or followed. Upload metadata is stored atomically
 in private device state. Upload IDs cannot cross devices, terminal incarnations
 or machines. Files and their metadata expire after seven days and are pruned
-on startup and during upload activity.
+on startup, during upload activity and by a background retry every minute.
+Each pass attempts at most 16 records within a two-second scheduling budget;
+unreachable storage retains its metadata and reserved capacity until cleanup
+succeeds. Shutdown waits for owned transfers and cleanup processes to exit.
 
 At most eight files may accompany one message. Stored and in-progress uploads
 are bounded to 512 MiB / 1,024 files per device and 2 GiB / 4,096 files per
