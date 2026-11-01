@@ -1,1 +1,23 @@
-{"name":"herdr-phone-web","private":true,"version":"0.1.0","type":"module","scripts":{"dev":"vite --host 127.0.0.1 --port 5176 --strictPort","build":"tsc --noEmit && vite build","test":"playwright test","test:unit":"vitest run"},"dependencies":{"@fontsource/geist":"^5.2.8","@fontsource/jetbrains-mono":"^5.2.8","@xterm/xterm":"^5.5.0"},"devDependencies":{"@playwright/test":"^1.56.1","typescript":"^5.9.3","vite":"^7.1.12","vitest":"^4.0.6"}}
+{
+  "name": "herdr-phone-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5176 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "test": "playwright test",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource/geist": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@xterm/xterm": "^5.5.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vitest": "^4.0.6"
+  }
+}

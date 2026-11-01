@@ -1,2 +1,25 @@
-import {defineConfig} from '@playwright/test';
-export default defineConfig({testDir:'./tests',testMatch:'*.spec.ts',fullyParallel:true,reporter:'list',use:{baseURL:'http://127.0.0.1:5177',viewport:{width:390,height:844},hasTouch:true,serviceWorkers:'block',trace:'retain-on-failure'},projects:[{name:'webkit',use:{browserName:'webkit'}},{name:'chromium',use:{browserName:'chromium'}}],webServer:{command:'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5177 --strictPort',url:'http://127.0.0.1:5177',reuseExistingServer:false},outputDir:'test-results'});
+import { defineConfig } from "@playwright/test";
+export default defineConfig({
+  testDir: "./tests",
+  testMatch: "*.spec.ts",
+  fullyParallel: true,
+  reporter: "list",
+  use: {
+    baseURL: "http://127.0.0.1:5177",
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    serviceWorkers: "block",
+    trace: "retain-on-failure",
+  },
+  projects: [
+    { name: "webkit", use: { browserName: "webkit" } },
+    { name: "chromium", use: { browserName: "chromium" } },
+  ],
+  webServer: {
+    command:
+      "node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5177 --strictPort",
+    url: "http://127.0.0.1:5177",
+    reuseExistingServer: false,
+  },
+  outputDir: "test-results",
+});
