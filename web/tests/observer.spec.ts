@@ -23,12 +23,14 @@ async function setup(page: Page) {
   });
   await page.route("**/api/**", route => {
     if (route.request().method() !== "GET") writes.push(route.request().url());
+    if (route.request().url().endsWith("/conversation")) return route.fulfill({ json: { available: false, reason: "not_found", session: null, revision: "0", turns: [], nextCursor: null } });
     return route.fulfill({ json: route.request().url().endsWith("/state") ? state :
       { terminal, text: "Plain fallback", screenId: "plain", prompt: null, complete: true } });
   });
   await page.goto("/");
   await page.getByRole("button", { name: "S Sample", exact: true }).tap();
   await expect.poll(() => watches.length).toBe(1);
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   const output = (text: string | Buffer, seq = 0, watch = watches.at(-1)!) =>
     socket!.send(JSON.stringify({ type: "output", terminalId: "t1", watchId: watch.watchId, history: watch.history,
       cols: 80, rows: 24, reset: seq === 0, seq, data: Buffer.from(text).toString("base64") }));

@@ -111,7 +111,7 @@ test("content resize keeps keyboard compact rules when both viewport heights shr
 
 for (const view of ["terminal", "conversation"]) test(`${view} keeps safe areas, attachments and long choices usable with keyboard`, async ({ page }) => {
   const actions = await setup(page, true);
-  if (view === "conversation") await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  if (view === "terminal") await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Attach files", exact: true }).tap();
   await (await chooser).setFiles({ name: "note.txt", mimeType: "text/plain", buffer: Buffer.from("A selected note.") });

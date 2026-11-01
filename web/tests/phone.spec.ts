@@ -142,6 +142,7 @@ async function setup(page: Page, paired = true, path = "/") {
       body = request.postDataJSON();
     } catch {}
     calls.push({ path, body, auth: request.headers()["authorization"] });
+    if (path.endsWith("/conversation")) return route.fulfill({ json: { available: false, reason: "not_found", session: null, revision: "0", turns: [], nextCursor: null } });
     if (path === "/api/pair")
       return route.fulfill({
         status: 201,
@@ -323,7 +324,7 @@ test("remote terminal stays qualified and old-tab screens are ignored", async ({
   sockets[0].send(
     JSON.stringify({ type: "error", code: "probe", message: "Frame boundary" }),
   );
-  await expect(page.getByRole("status")).toHaveText("Frame boundary");
+  await expect(page.locator('.notice[role="status"]')).toHaveText("Frame boundary");
   await expect(page.locator("#terminal-info")).toContainText("100 × 30");
   expect(new URL(page.url()).hash).toBe("#terminal=remote%2Ft3");
 });
@@ -356,7 +357,7 @@ test("pending input retains its terminal and failures cancel queued input", asyn
   await page.getByLabel("Type to terminal").fill("second");
   await page.getByRole("button", { name: "Send", exact: true }).tap();
   release();
-  await expect(page.getByRole("status")).toContainText("not replayed");
+  await expect(page.locator('.notice[role="status"]')).toContainText("not replayed");
   await expect
     .poll(() =>
       calls.some(
@@ -425,7 +426,7 @@ test("core disconnect cancels unsent input without replay", async ({
   await expect.poll(() => received).toBe(true);
   await page.getByRole("button", { name: "down", exact: true }).tap();
   sockets[0].send(JSON.stringify({ type: "connection", connected: false }));
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator('.notice[role="status"]')).toContainText(
     "Pending input was cancelled",
   );
   release();
@@ -541,11 +542,11 @@ test("disconnect leaves uncertain draft intact and reconnect never replays", asy
   await expect.poll(() => received).toBe(1);
   await page.getByRole("button", { name: "down", exact: true }).tap();
   sockets[0].send(JSON.stringify({ type: "connection", connected: false }));
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator('.notice[role="status"]')).toContainText(
     "Pending input was cancelled",
   );
   release();
-  await expect(page.getByRole("status")).toContainText("unknown");
+  await expect(page.locator('.notice[role="status"]')).toContainText("unknown");
   sockets[0].send(JSON.stringify({ type: "connection", connected: true }));
   await expect(
     page.getByRole("button", { name: "Send", exact: true }),
@@ -628,14 +629,14 @@ test("changed force confirmation stops before dispatch and server stale denial r
   await expect(page.getByRole("dialog")).toBeVisible();
   screenId = "screen-2";
   await page.getByRole("button", { name: "Send anyway" }).tap();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator('.notice[role="status"]')).toContainText(
     "review the current dialog",
   );
   expect(sends).toHaveLength(1);
   await expect(input).toHaveValue("keep this");
   await input.press("Enter");
   await page.getByRole("button", { name: "Send anyway" }).tap();
-  await expect(page.getByRole("status")).toContainText("Draft retained");
+  await expect(page.locator('.notice[role="status"]')).toContainText("Draft retained");
   await expect.poll(() => sends.length).toBe(3);
   expect(sends[2]).toEqual({
     text: "keep this",
@@ -685,7 +686,7 @@ test("scoped prompt labels are preserved and stale choices remain visibly reject
   await page
     .getByRole("button", { name: "Allow for this session", exact: true })
     .tap();
-  await expect(page.getByRole("status")).toContainText("This choice is stale");
+  await expect(page.locator('.notice[role="status"]')).toContainText("This choice is stale");
   expect(actions).toEqual([{ promptId: "scoped", optionId: "session" }]);
   expect(actions[0].keys).toBeUndefined();
 });
@@ -826,7 +827,7 @@ test("socket reconnect after failed request preserves draft without resubmission
   const input = page.getByLabel("Type to terminal");
   await input.fill("retain on reconnect");
   await input.press("Enter");
-  await expect(page.getByRole("status")).toContainText("Draft retained");
+  await expect(page.locator('.notice[role="status"]')).toContainText("Draft retained");
   await expect.poll(() => sockets.length).toBe(2);
   await expect(
     page.getByRole("button", { name: "Send", exact: true }),
@@ -1000,7 +1001,7 @@ test("prompt choices disappear on disconnect and consumed prompts stay hidden", 
       message: "Repeated prompt processed",
     }),
   );
-  await expect(page.getByRole("status")).toHaveText(
+  await expect(page.locator('.notice[role="status"]')).toHaveText(
     "Repeated prompt processed",
   );
   await expect(page.locator("#approvals button")).toHaveCount(0);

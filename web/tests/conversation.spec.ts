@@ -9,8 +9,8 @@ function turns(format: "messages" | "responses", count = 173): ConversationPage[
     { id: `reply-${i}`, role: "assistant", text: `Reply ${i}: The review is complete. ${"A readable line of saved conversation. ".repeat(3)} ${i === 172 ? "<img src=x onerror=alert(1)>" + "z".repeat(600) : ""}` },
   ] }));
 }
-async function setup(page: Page, format: "messages" | "responses" = "messages") {
-  const model = { data: turns(format), session: format, status: 200, unavailable: false, requests: [] as string[], pending: undefined as Route | undefined, delayOlder: false, delayLatest: false, sockets: [] as WebSocketRoute[] };
+async function setup(page: Page, format: "messages" | "responses" = "messages", initial: { delayLatest?: boolean; unavailable?: boolean } = {}) {
+  const model = { data: turns(format), session: format, status: 200, unavailable: initial.unavailable ?? false, requests: [] as string[], pending: undefined as Route | undefined, delayOlder: false, delayLatest: initial.delayLatest ?? false, sockets: [] as WebSocketRoute[] };
   const result = (before?: string): ConversationPage => {
     const end = before ? Number(before) : model.data.length;
     const start = Math.max(0, end - 50);
@@ -37,10 +37,13 @@ async function setup(page: Page, format: "messages" | "responses" = "messages") 
   });
   await page.goto("/");
   await page.getByRole("button", { name: "W Workbench sample · main" }).tap();
-  await expect(page.getByRole("button", { name: "Show readable text" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Terminal view", exact: true })).toBeVisible();
+  await expect(page.locator(".conversation")).toBeVisible();
   return { model, result, open: async () => {
-    await hit(page.getByRole("button", { name: "Conversation", exact: true }));
-    await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+    const back = page.getByRole("button", { name: "Conversation", exact: true });
+    if (await back.isVisible()) await back.tap();
+    await hit(page.getByRole("button", { name: "Terminal view", exact: true }));
+    await expect(page.locator(".conversation")).toBeVisible();
   } };
 }
 async function hit(control: Locator) {
@@ -80,10 +83,10 @@ for (const format of ["messages", "responses"] as const) test(`${format}: 173 tu
   await hit(host.getByRole("button", { name: "Latest messages" }));
   await host.getByRole("button", { name: "Latest messages" }).tap();
   await expect(host.locator('[data-turn="turn-172"]')).toBeVisible();
-  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   await expect(page.locator(".terminal-viewport")).toBeVisible();
   await expect(page.getByRole("button", { name: "Show readable text" })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem("herdr-phone.terminal-view"))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem("herdr-phone.terminal-view"))).toBe("mirror");
 });
 
 test("poll updates current turn, appends uniquely, preserves nodes and reading position", async ({ page }) => {
@@ -110,8 +113,7 @@ test("poll updates current turn, appends uniquely, preserves nodes and reading p
 });
 
 test("unavailable, retry, errors and disconnect keep terminal controls usable", async ({ page }) => {
-  const { open, model } = await setup(page);
-  model.unavailable = true;
+  const { open, model } = await setup(page, "messages", { unavailable: true });
   await open();
   await expect(page.getByText("Saved conversation is unavailable for this terminal.")).toBeVisible();
   await hit(page.getByRole("button", { name: "Retry conversation" }));
@@ -124,7 +126,7 @@ test("unavailable, retry, errors and disconnect keep terminal controls usable", 
   await expect(page.locator('[data-turn="turn-172"]')).toBeVisible();
   model.sockets[0].close();
   await expect(page.getByText("Conversation is offline. Reconnect and retry.")).toBeVisible();
-  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   const count = model.requests.length;
   await page.getByRole("button", { name: "Conversation", exact: true }).tap();
   await page.waitForTimeout(150);
@@ -142,7 +144,7 @@ test("late older response cannot overwrite replacement session; reads serialize"
   const old = model.pending!, oldPage = result("123"), count = model.requests.length;
   await page.waitForTimeout(2700);
   expect(model.requests.length).toBe(count);
-  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   model.session = "replacement"; model.data = [{ id: "replacement", entries: [{ id: "replacement-user", role: "user", text: "Replacement session" }] }];
   await page.getByRole("button", { name: "Conversation", exact: true }).tap();
   await expect(page.getByText("Replacement session", { exact: true })).toBeVisible();
@@ -152,14 +154,13 @@ test("late older response cannot overwrite replacement session; reads serialize"
 });
 
 test("terminal switch cancels stale latest; no-overlap refresh resets page and cursor", async ({ page }) => {
-  const { open, model, result } = await setup(page);
-  model.delayLatest = true;
+  const { open, model, result } = await setup(page, "messages", { delayLatest: true });
   await open();
   await expect.poll(() => !!model.pending).toBe(true);
   const old = model.pending!, oldPage = result();
-  await page.getByRole("button", { name: "Review", exact: true }).tap();
   model.delayLatest = false;
   model.data = turns("responses", 250);
+  await page.getByRole("button", { name: "Review", exact: true }).tap();
   await open();
   await expect(page.locator('[data-turn="turn-249"]')).toBeVisible();
   await old.fulfill({ json: oldPage }).catch(() => {});
@@ -175,6 +176,7 @@ test("terminal switch cancels stale latest; no-overlap refresh resets page and c
 
 test("older prepend preserves visible anchor and Read preference survives Conversation", async ({ page }) => {
   const { open, model, result } = await setup(page);
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   await page.getByRole("button", { name: "Show readable text" }).tap();
   await open();
   await expect(page.locator('[data-turn="turn-172"]')).toBeVisible();
@@ -187,14 +189,13 @@ test("older prepend preserves visible anchor and Read preference survives Conver
   await model.pending!.fulfill({ json: result("123") });
   await expect(page.locator('[data-turn="turn-73"]')).toBeAttached();
   expect(Math.abs((await anchor.boundingBox())!.y - before)).toBeLessThan(3);
-  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   await expect(page.locator(".terminal-read")).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem("herdr-phone.terminal-view"))).toBe("read");
 });
 
 test("revoked authentication cancels a delayed page and returns pairing", async ({ page }) => {
-  const { open, model } = await setup(page);
-  model.delayLatest = true;
+  const { open, model } = await setup(page, "messages", { delayLatest: true });
   await open();
   await expect.poll(() => !!model.pending).toBe(true);
   await model.pending!.fulfill({ status: 401, json: { error: { code: "unauthorized", message: "Pair this phone to continue." } } });
