@@ -158,6 +158,7 @@ function renderAttachments() {
       renderAttachments();
       updateCompose();
     }, "attachment-remove");
+    remove.disabled = pending.has(id);
     remove.setAttribute("aria-label", `Remove ${selected.file.name}`);
     chip.append(remove);
     host.append(chip);
@@ -170,6 +171,9 @@ function updateCompose() {
     input.value = draft(active.id).text;
     submit.disabled = pending.has(active.id) || !connected || (!input.value && !draft(active.id).files.length);
     submit.textContent = pending.has(active.id) ? "Sending…" : "Send";
+    const attach = root.querySelector<HTMLButtonElement>(".attach-files");
+    if (attach) attach.disabled = pending.has(active.id);
+    root.querySelectorAll<HTMLButtonElement>(".attachment-remove").forEach(remove => { remove.disabled = pending.has(active!.id); });
   }
 }
 const folded = new Set<string>();
@@ -866,6 +870,7 @@ async function submitDraft(id: string, forceScreenId?: string, captured?: Submis
   pending.add(id);
   submissions.set(id, submission.controller);
   updateCompose();
+  let dispatched = false;
   try {
     // Capture once: later edits and removals belong to the next message.
     if (!captured) for (const selected of submission.files) {
@@ -875,6 +880,7 @@ async function submitDraft(id: string, forceScreenId?: string, captured?: Submis
       submission.uploads.push(result.upload.id);
     }
     if (!validSubmission(submission)) throw new Error("Sending was cancelled.");
+    dispatched = true;
     await client.action(id, "send", {
       text: submission.text,
       ...(submission.uploads.length ? { uploads: submission.uploads } : {}),
@@ -884,7 +890,10 @@ async function submitDraft(id: string, forceScreenId?: string, captured?: Submis
     if (saved.revision === submission.revision) clearDraft(saved);
   } catch (error) {
     if (!client.token) return;
-    notice("Draft and files retained. Delivery may be unknown; check the terminal before sending again.");
+    const reason = validSubmission(submission) ? (error as Error).message : "Sending was cancelled.";
+    notice(dispatched
+      ? `${reason} Draft and files retained. Delivery may be unknown; check the terminal before sending again.`
+      : `${reason} Nothing was sent. Draft and files retained.`);
     if (error instanceof ApiError && error.code === "terminal_blocked" && !forceScreenId && validSubmission(submission)) {
       const screen = await refreshScreen(id);
       if (screen && validSubmission(submission)) {
