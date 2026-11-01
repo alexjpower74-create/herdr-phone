@@ -93,9 +93,37 @@ async function choose(page: any, view: "read" | "mirror") {
   const current = await page.locator(".terminal-viewport").getAttribute("data-view");
   if (current !== view) await page.getByRole("button", { name: view === "read" ? "Show readable text" : "Show desktop mirror", exact: true }).tap();
 }
+async function auditRecords() {
+  return (await Promise.all((await readdir(scratch)).filter((f) => f.startsWith("wire-")).map(async (f) =>
+    (await readFile(join(scratch, f), "utf8")).trim().split("\n").filter(Boolean).map((s) => JSON.parse(s))))).flat();
+}
+async function recordersStopped() {
+  await eventually(async () => {
+    try {
+      const records = await auditRecords();
+      const started = records.filter((r) => r.phase === "started");
+      return started.every((r) => records.some((v) => v.phase === "stopped" && v.wrapperPid === r.wrapperPid) &&
+        [r.wrapperPid, r.childPid].every((pid) => { try { process.kill(pid, 0); return false; } catch (e: any) { return e.code === "ESRCH"; } }));
+    } catch { return false; }
+  }, "Recorder or owned core connection did not exit", 7000);
+}
+async function recovered(page: any, expected: number[], oldWatch: string | undefined) {
+  if (baseline) return;
+  await eventually(async () => {
+    const current = await inspect(page);
+    return current?.observer && current.watchId !== oldWatch &&
+      current.size.cols === expected[0] && current.size.rows === expected[1] &&
+      current.rows[0]?.text.trimEnd() === "You: show the checks" &&
+      current.rows[1]?.text.trimEnd() === "Terminal: checks are running" &&
+      current.rows[2]?.text.trimEnd() === "Stable line stays in place" &&
+      /^Spinner: [|/\\-] \d+$/.test(current.rows[3]?.text.trimEnd());
+  }, "Fresh observer did not recover exact rows after desktop geometry changed");
+  check(`browser recovered exact content at ${expected.join("x")}`, true);
+}
 
 try {
   beforeFocus = focus(desktop());
+  assert((beforeFocus as unknown[]).every((value) => typeof value === "string" && value.length > 0), "Desktop focus baseline is incomplete");
   await core.connect(); await desktopCore.connect();
   before = (await core.call("terminal.list", { all: true })).terminals;
   await writeFile(join(scratch, "producer.py"), String.raw`import os,sys,time,json,fcntl,termios,struct,tty
@@ -152,6 +180,7 @@ log=open(os.path.join(root,'wire-'+str(os.getpid())+'.jsonl'),'a',buffering=1)
 buf=b''
 mode=None
 def record(v): log.write(json.dumps(v)+'\n')
+record({'phase':'started','wrapperPid':os.getpid(),'childPid':child.pid})
 def rpc(payload):
  try:
   v=json.loads(payload)
@@ -196,6 +225,7 @@ finally:
  child.terminate()
  try: child.wait(timeout=3)
  except subprocess.TimeoutExpired: child.kill();child.wait()
+ record({'phase':'stopped','wrapperPid':os.getpid(),'childPid':child.pid})
  log.close()
 `, { mode: 0o700 });
   process.env.HERDR_PHONE_HC = join(scratch, "hc-audit");
@@ -219,9 +249,10 @@ finally:
   await size("phone observer only", headless);
   await page.evaluate(() => document.fonts.ready);
   const cells = await inspect(page, true);
+  if (!baseline) assert(cells, "Candidate inspection seam is unavailable");
   const highlighted = cells?.rows.find((r: any) => r.text.includes("You: show"));
   const plain = cells?.rows.find((r: any) => r.text.includes("Terminal: checks"));
-  check("highlighted and plain buffer backgrounds differ", !!highlighted && !!plain && highlighted.cells[0].bg !== plain.cells[0].bg,
+  check("highlighted and plain buffer backgrounds differ", !!highlighted && !!plain && highlighted.cells[0].bg === 0x24527d && highlighted.cells[0].bg !== plain.cells[0].bg,
     { highlighted: highlighted?.cells[0], plain: plain?.cells[0] });
   await page.screenshot({ path: join(directory, `terminal-colours-${label}-webkit.png`) });
   await choose(page, "read");
@@ -258,27 +289,34 @@ finally:
     await scrollTop(page);
     await page.screenshot({ path: join(directory, `terminal-history-${view}-${label}-webkit.png`) });
   }
+  await command("spinner");
+  const oldWatch = (await inspect(page))?.watchId;
   desktopChannel = (await desktopCore.call("terminal.attach", { terminal: terminalId, observe: false, cols: 100, rows: 30, history: 0 })).channel;
   await size("synthetic desktop joins", [100, 30]);
   await command("spinner");
   await page.waitForTimeout(1200);
   await size("observer with desktop", [100, 30]);
+  await recovered(page, [100, 30], oldWatch);
+  const desktopWatch = (await inspect(page))?.watchId;
   desktopCore.process!.stdin.write(frame(desktopChannel, 2, Buffer.alloc(0)));
   desktopChannel = undefined;
   await size("desktop leaves while observer remains", headless);
+  await command("spinner");
+  await recovered(page, headless, desktopWatch);
   const video = page.video();
   await context.close(); context = undefined;
   if (video) await video.saveAs(join(directory, `terminal-display-${label}-webkit.webm`));
   await size("phone disconnect", headless);
   check("no browser errors", pageErrors.length === 0, pageErrors);
   app.stop(); app = undefined;
-  await Bun.sleep(100);
-  const records = (await Promise.all((await readdir(scratch)).filter((f) => f.startsWith("wire-")).map(async (f) =>
-    (await readFile(join(scratch, f), "utf8")).trim().split("\n").filter(Boolean).map((s) => JSON.parse(s))))).flat();
+  await recordersStopped();
+  const records = await auditRecords();
   const attaches = records.filter((r) => r.method === "terminal.attach");
   check("production attachments are observe-only", attaches.length > 0 && attaches.every((r) => r.observe === true && r.terminal === terminalId), attaches);
-  check("production channel frames are CREDIT or CLOSE only", records.filter((r) => r.channel).every((r) => [1, 2].includes(r.kind)));
-  check("all plain reads use history zero", records.filter((r) => r.method === "terminal.read").every((r) => r.lines === 0));
+  const channelFrames = records.filter((r) => r.channel);
+  check("production channel frames are CREDIT or CLOSE only", channelFrames.some((r) => r.kind === 1) && channelFrames.every((r) => [1, 2].includes(r.kind)));
+  const reads = records.filter((r) => r.method === "terminal.read");
+  check("all plain reads use history zero", reads.length > 0 && reads.every((r) => r.lines === 0));
   report.channelFrames = records.filter((r) => r.channel).map((r) => ({ kind: r.kind, length: r.length }));
   const after = (await core.call("terminal.list", { all: true })).terminals;
   for (const prior of before) {
@@ -294,6 +332,7 @@ finally:
     await attempt(() => browser?.close());
     await attempt(() => vite?.close());
     await attempt(() => app?.stop());
+    await attempt(() => recordersStopped());
     await attempt(() => desktopCore.close());
     if (terminalId) {
       await attempt(async () => {
