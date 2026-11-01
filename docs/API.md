@@ -237,22 +237,58 @@ the newly created terminal on a failed creation; never touch other terminals.
 ## Push (Phase 3)
 
 `GET /api/push/key` returns `{ "publicKey": "<base64url VAPID key>" }`.
+`GET /api/push/subscription` returns `{ "enabled": true, "endpoint": "<endpoint>" }`
+for this device, or `{ "enabled": false, "endpoint": null }`.
 `POST /api/push/subscription` accepts the browser's PushSubscription JSON and
 returns 201 `{ "ok": true }`. `DELETE /api/push/subscription` with
 `{ "endpoint": "<endpoint>" }` removes that device's subscription, 204.
-Subscriptions belong to the authenticated device and are removed on revocation.
-Validate HTTPS push endpoints against supported push services; reject local,
-private and arbitrary destinations to prevent server-side request forgery.
+Each device has at most one active subscription; registering replaces its old
+one. The same endpoint cannot belong to two devices (`409 subscription_conflict`).
+Deletion is idempotent and cannot remove another device's subscription.
+Subscriptions belong to the authenticated device and are removed atomically on
+revocation. Validate the expiration time, a valid uncompressed P-256 `p256dh`
+public key, and a 16-byte `auth` secret. Store subscription credentials privately.
 
-Follow core status/turn events. Notify on entry into blocked and on a completed
-turn, once per terminal/turn/type. Initial snapshots and reconnection must not
-re-notify old states. Notification payload: `{ "title": "Herdr", "body":
+Only HTTPS endpoints on these exact hosts are accepted: `web.push.apple.com`,
+`fcm.googleapis.com`, and `updates.push.services.mozilla.com`. Only the default
+HTTPS port is allowed; user information and fragments are forbidden. Reject
+local, private and arbitrary destinations, including deceptive host suffixes.
+Never follow redirects. No HTTP request or environment setting can widen this
+allowlist. Tests may inject a transport without changing production validation.
+
+`POST /api/push/test` with `{}` sends only to this device's active subscription.
+It returns 202 `{ "ok": true }` when the push service accepts the request; this
+is not confirmation of delivery to a phone. No subscription, or an expired one,
+returns `409 subscription_required`; a failed provider request returns
+`502 push_failed`. The test payload has title `Herdr`, body `Notifications are on`,
+a fresh tag and URL `/`. The Settings toggle requests permission directly from
+a user gesture, registers this device on enable, and deletes its subscription
+before unsubscribing the browser on disable. A permission denial, network failure,
+or failed registration must not be displayed as enabled.
+
+Follow `events.subscribe` status/turn events, including qualified remote ids.
+Notify on entry into blocked and on a completed turn, once per terminal/turn/kind.
+The core's turn counter identifies the turn. Initial snapshots, missed-event
+resnapshots and reconnection establish a silent baseline and must not re-notify
+old states. Ignore duplicate/out-of-order event sequence numbers. Live events
+must be consumed in order; periodic HTTP/WS snapshots never trigger delivery.
+Do not retry ambiguous provider failures automatically or replay notification
+history when a device subscribes. Notification payload: `{ "title": "Herdr", "body":
 "<space / tab> needs you", "tag": "<terminal/turn/kind>", "url":
 "/#terminal=<encoded-id>" }`. For a finished turn, use "<space / tab> finished".
 Names come from the layout, never terminal contents or terminal titles. Avoid
 duplicating identical space/tab names; fall back to "A terminal" if unnamed.
-Keep terminal contents out of lock-screen text.
-Persist VAPID keys privately; discard expired subscriptions on 404/410.
+Strip control characters from layout names and bound the whole body to 240
+characters. Keep terminal contents, status messages and terminal titles out of
+lock-screen text. Notification taps navigate to the encoded terminal id on this
+origin only. The service worker validates the deep link before navigating.
+
+Persist the VAPID key pair in the private configuration directory (0700), in a
+0600 file, without regenerating it on restart or corrupt state. Use
+`HERDR_PHONE_VAPID_SUBJECT` for an HTTPS contact URL or mailto URI; otherwise use
+the configured HTTPS origin. Never expose the private key through the API or
+logs. Discard expired subscriptions on 404/410, but retain them for transient
+provider errors. Apply a bounded request timeout and a short notification TTL.
 
 ## Verification boundary
 
