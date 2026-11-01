@@ -66,14 +66,20 @@ export class Client {
       .catch(() => {})
       .then(async () => {
         if (epoch !== (this.epochs.get(id) ?? 0))
-          throw new Error("Pending input was cancelled. Check the terminal before sending again.");
-        const result = await this.request(`/terminals/${encodeURIComponent(id)}/${kind}`, body);
+          throw new Error(
+            "Pending input was cancelled. Check the terminal before sending again.",
+          );
+        const result = await this.request(
+          `/terminals/${encodeURIComponent(id)}/${kind}`,
+          body,
+        );
         if (epoch !== (this.epochs.get(id) ?? 0))
           throw new Error("Delivery outcome is unknown after disconnection.");
         return result;
       })
       .catch((error) => {
-        if (epoch === (this.epochs.get(id) ?? 0)) this.epochs.set(id, epoch + 1);
+        if (epoch === (this.epochs.get(id) ?? 0))
+          this.epochs.set(id, epoch + 1);
         throw error;
       });
     this.queues.set(id, next);

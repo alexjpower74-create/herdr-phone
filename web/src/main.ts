@@ -345,7 +345,11 @@ function showTerminal(desired?: string) {
     }
   };
   const compose = element("div", "compose");
-  const submit = button("Send", () => void submitDraft(idForDraft), "primary compose-send");
+  const submit = button(
+    "Send",
+    () => void submitDraft(idForDraft),
+    "primary compose-send",
+  );
   compose.append(input, submit);
   dock.append(keys, compose);
   root.append(dock);
@@ -379,7 +383,12 @@ function showTerminal(desired?: string) {
     .then((screen) => {
       if (active?.id !== id || generation !== screenGeneration) return;
       active = screen.terminal;
-      paint(screen.text, screen.terminal.cols, screen.terminal.rows, screen.prompt);
+      paint(
+        screen.text,
+        screen.terminal.cols,
+        screen.terminal.rows,
+        screen.prompt,
+      );
     })
     .catch((e) => notice((e as Error).message));
 }
@@ -423,7 +432,12 @@ function dimensions(cols: number, rows: number) {
     emulator.resize(cols, rows);
   updateTerminalInfo();
 }
-function paint(text: string, cols: number, rows: number, prompt: Prompt | null = null) {
+function paint(
+  text: string,
+  cols: number,
+  rows: number,
+  prompt: Prompt | null = null,
+) {
   currentPrompt = prompt;
   dimensions(cols, rows);
   if (!emulator) return;
@@ -451,17 +465,33 @@ function renderChoices() {
   const id = active.id;
   const prompt = currentPrompt;
   for (const choice of prompt.options) {
-    area.append(button(choice.label, async () => {
-      if (!connected || currentPrompt?.id !== prompt.id || usedPrompt === prompt.id) return;
-      usedPrompt = prompt.id;
-      renderChoices();
-      try {
-        await client.action(id, "prompt", { promptId: prompt.id, optionId: choice.id });
-      } catch (error) {
-        notice(`${(error as Error).message} Choice was not replayed; refresh the dialog before choosing again.`);
-        if (active?.id === id) await refreshScreen(id);
-      }
-    }, "approval"));
+    area.append(
+      button(
+        choice.label,
+        async () => {
+          if (
+            !connected ||
+            currentPrompt?.id !== prompt.id ||
+            usedPrompt === prompt.id
+          )
+            return;
+          usedPrompt = prompt.id;
+          renderChoices();
+          try {
+            await client.action(id, "prompt", {
+              promptId: prompt.id,
+              optionId: choice.id,
+            });
+          } catch (error) {
+            notice(
+              `${(error as Error).message} Choice was not replayed; refresh the dialog before choosing again.`,
+            );
+            if (active?.id === id) await refreshScreen(id);
+          }
+        },
+        "approval",
+      ),
+    );
   }
 }
 async function refreshScreen(id: string) {
@@ -470,22 +500,37 @@ async function refreshScreen(id: string) {
     const screen = await client.screen(id);
     if (active?.id !== id || generation !== screenGeneration) return;
     active = screen.terminal;
-    paint(screen.text, screen.terminal.cols, screen.terminal.rows, screen.prompt);
+    paint(
+      screen.text,
+      screen.terminal.cols,
+      screen.terminal.rows,
+      screen.prompt,
+    );
     return screen;
   } catch (error) {
     notice((error as Error).message);
   }
 }
 function keyAction(key: string) {
-  if (!active || !connected) return notice("Connection unavailable. Input was not sent.");
-  if (key === "enter" && draft(active.id).text) return void submitDraft(active.id);
+  if (!active || !connected)
+    return notice("Connection unavailable. Input was not sent.");
+  if (key === "enter" && draft(active.id).text)
+    return void submitDraft(active.id);
   const id = active.id;
-  void client.action(id, "keys", { keys: [key] }).catch((error) =>
-    notice(`${(error as Error).message} Input was not replayed; check the terminal before continuing.`));
+  void client
+    .action(id, "keys", { keys: [key] })
+    .catch((error) =>
+      notice(
+        `${(error as Error).message} Input was not replayed. Earlier delivery may be unknown; check the terminal before continuing.`,
+      ),
+    );
 }
 async function submitDraft(id: string, forceScreenId?: string) {
   if (pending.has(id)) return;
-  if (!connected) return notice("Connection unavailable. Draft retained; nothing was replayed.");
+  if (!connected)
+    return notice(
+      "Connection unavailable. Draft retained; nothing was replayed.",
+    );
   const saved = draft(id);
   const text = saved.text;
   const revision = saved.revision;
@@ -502,24 +547,45 @@ async function submitDraft(id: string, forceScreenId?: string) {
       saved.revision++;
     }
   } catch (error) {
-    notice(`${(error as Error).message} Draft retained. Delivery may be unknown; check the terminal before sending again.`);
-    if (error instanceof ApiError && error.code === "terminal_blocked" && !forceScreenId && active?.id === id) {
+    notice(
+      `${(error as Error).message} Draft retained. Delivery may be unknown; check the terminal before sending again.`,
+    );
+    if (
+      error instanceof ApiError &&
+      error.code === "terminal_blocked" &&
+      !forceScreenId &&
+      active?.id === id
+    ) {
       const screen = await refreshScreen(id);
       if (screen && active?.id === id && connected) {
         const dialog = modal("Terminal is waiting for a choice");
         dialog.append(element("pre", "blocked-screen", screen.text));
-        dialog.append(element("p", "muted", "Sending this draft may answer the current dialog."));
-        dialog.append(button("Send anyway", async () => {
-          dialog.close();
-          // Refresh after deliberate confirmation, then let the bridge revalidate at dispatch.
-          const fresh = await refreshScreen(id);
-          if (!fresh || active?.id !== id || !connected) return;
-          if (fresh.screenId !== screen.screenId) {
-            notice("The dialog changed. Draft retained; review the current dialog before sending again.");
-            return;
-          }
-          void submitDraft(id, fresh.screenId);
-        }, "primary"));
+        dialog.append(
+          element(
+            "p",
+            "muted",
+            "Sending this draft may answer the current dialog.",
+          ),
+        );
+        dialog.append(
+          button(
+            "Send anyway",
+            async () => {
+              dialog.close();
+              // Refresh after deliberate confirmation, then let the bridge revalidate at dispatch.
+              const fresh = await refreshScreen(id);
+              if (!fresh || active?.id !== id || !connected) return;
+              if (fresh.screenId !== screen.screenId) {
+                notice(
+                  "The dialog changed. Draft retained; review the current dialog before sending again.",
+                );
+                return;
+              }
+              void submitDraft(id, fresh.screenId);
+            },
+            "primary",
+          ),
+        );
       }
     }
   } finally {
@@ -650,21 +716,34 @@ function newSpace(
   cwd.autocapitalize = "off";
   cwd.spellcheck = false;
   const defaultDirectory = () => {
-    cwd.value = (space?.machineId === machine.value ? space.cwd : undefined)
-      || state?.spaces.find((item) => item.machineId === machine.value && item.cwd)?.cwd || "";
+    cwd.value =
+      (space?.machineId === machine.value ? space.cwd : undefined) ||
+      state?.spaces.find((item) => item.machineId === machine.value && item.cwd)
+        ?.cwd ||
+      "";
   };
   defaultDirectory();
-  machine.onchange = defaultDirectory;
+
   const program = element("select");
   program.setAttribute("aria-label", "Program");
-  for (const p of state.programs) {
-    const option = element("option", "", p.name);
-    option.value = p.id;
-    program.append(option);
-  }
   const submit = element("button", "primary", "Create space");
   submit.type = "submit";
-  submit.disabled = !state.programs.length;
+  const updatePrograms = () => {
+    program.replaceChildren();
+    for (const p of state!.programs.filter(
+      (item) => item.machineId === machine.value,
+    )) {
+      const option = element("option", "", p.name);
+      option.value = p.id;
+      program.append(option);
+    }
+    submit.disabled = !program.options.length;
+  };
+  updatePrograms();
+  machine.onchange = () => {
+    defaultDirectory();
+    updatePrograms();
+  };
   const error = element("p", "form-error");
   error.role = "alert";
   form.append(machine, name, cwd, program, submit, error);

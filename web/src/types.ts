@@ -22,7 +22,7 @@ export type State = {
   revision: number;
   machines: { id: string; name: string; online: boolean }[];
   spaces: Space[];
-  programs: { id: string; name: string }[];
+  programs: { id: string; name: string; machineId: string }[];
 };
 export type Prompt = {
   id: string;
