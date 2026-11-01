@@ -153,7 +153,17 @@ try {
     owned.set(id, { machine, root, name });
     await layout(machine, value => { value.spaces ||= []; value.spaces.push({ id: spaceId, name: "Conversation check", folder: root,
       tabs: [{ id: tab, name: "Saved messages", root: { id: `p${randomUUID().replaceAll("-", "")}`, type: "block", content: { terminal: id.split("/").at(-1) } } }] }); });
-    await eventually(async () => { try { return !!JSON.parse(await file(machine, root, "ready.json")).pid; } catch { return false; } }, "Fixture did not start");
+    await eventually(async () => {
+      try { return !!JSON.parse(await file(machine, root, "ready.json")).pid; }
+      catch {
+        const current = await core.call("terminal.get", { terminal: id });
+        if (current.state === "finished") {
+          const read = await core.call("terminal.read", { terminal: id, lines: 0 });
+          throw Error(`Owned fixture exited: ${read.text}`);
+        }
+        return false;
+      }
+    }, "Fixture did not start");
     displayed = await core.call("terminal.get", { terminal: id });
     const size = [displayed.cols, displayed.rows];
     const headers = { Authorization: `Bearer ${paired.token}` };
