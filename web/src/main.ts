@@ -5,6 +5,7 @@ import "@fontsource/geist/500.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "./style.css";
 import { ApiError, Client } from "./client";
+import { readableLines } from "./readable";
 import type { State, Space, Tab, TerminalInfo, Frame, Prompt } from "./types";
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const client = new Client();
@@ -21,6 +22,12 @@ let currentText = "",
   usedPrompt = "",
   screenGeneration = 0;
 let appEpoch = 0;
+type TerminalView = "read" | "mirror";
+const terminalViews = new Map<string, TerminalView>();
+let terminalView: TerminalView = "read",
+  followingNewest = true,
+  readPosition = 0,
+  readSource: string | undefined;
 const drafts = new Map<string, { text: string; revision: number }>();
 const pending = new Set<string>();
 function draft(id: string) {
@@ -268,7 +275,16 @@ function showTerminal(desired?: string) {
     b.setAttribute("aria-current", String(item.id === tab?.id));
     tabs.append(b);
   }
-  root.append(tabs);
+  const tabHeader = element("div", "tab-header");
+  const viewToggle = button(
+    "Mirror",
+    () => {
+      setTerminalView(terminalView === "read" ? "mirror" : "read");
+    },
+    "view-toggle",
+  );
+  tabHeader.append(tabs, viewToggle);
+  root.append(tabHeader);
   const terminals = tab?.terminals ?? [];
   active = terminals.find((t) => t.id === desired) ?? terminals[0];
   if (terminals.length > 1) {
@@ -285,9 +301,15 @@ function showTerminal(desired?: string) {
     root.append(panes);
   }
   if (!active) {
+    viewToggle.hidden = true;
     root.append(element("p", "empty", "This tab has no running terminal."));
     return;
   }
+  terminalView = terminalViews.get(active.id) ?? "read";
+  followingNewest = true;
+  readPosition = 0;
+  readSource = undefined;
+  currentText = "";
   history.replaceState(null, "", `#terminal=${encodeURIComponent(active.id)}`);
   const info = element("div", "terminal-info");
   info.id = "terminal-info";
@@ -296,7 +318,22 @@ function showTerminal(desired?: string) {
   const viewport = element("main", "terminal-viewport");
   viewport.setAttribute("aria-label", "Terminal screen");
   const canvas = element("div", "terminal-canvas");
-  viewport.append(canvas);
+  const read = element("div", "terminal-read");
+  read.setAttribute("aria-label", "Readable terminal text");
+  viewport.append(canvas, read);
+  viewport.addEventListener(
+    "scroll",
+    () => {
+      if (terminalView !== "read") return;
+      const nextPosition = viewport.scrollTop;
+      const atBottom =
+        viewport.scrollHeight - nextPosition - viewport.clientHeight < 32;
+      if (atBottom) followingNewest = true;
+      else if (nextPosition < readPosition - 1) followingNewest = false;
+      readPosition = nextPosition;
+    },
+    { passive: true },
+  );
   root.append(viewport);
   const approvals = element("div", "approvals");
   approvals.id = "approvals";
@@ -367,9 +404,14 @@ function showTerminal(desired?: string) {
   });
   emulator.open(canvas);
   viewport.onclick = () => input.focus();
-  resize = new ResizeObserver(() => scaleTerminal());
+  resize = new ResizeObserver(() => {
+    scaleTerminal();
+    if (terminalView === "read" && followingNewest)
+      viewport.scrollTop = viewport.scrollHeight;
+  });
   resize.observe(viewport);
-  scaleTerminal();
+  resize.observe(read);
+  setTerminalView(terminalView);
   updateCompose();
   currentText = "";
   currentPrompt = null;
@@ -392,12 +434,62 @@ function showTerminal(desired?: string) {
     })
     .catch((e) => notice((e as Error).message));
 }
+function setTerminalView(view: TerminalView) {
+  const viewport = root.querySelector<HTMLElement>(".terminal-viewport"),
+    canvas = root.querySelector<HTMLElement>(".terminal-canvas"),
+    read = root.querySelector<HTMLElement>(".terminal-read"),
+    toggle = root.querySelector<HTMLButtonElement>(".view-toggle");
+  if (!viewport || !canvas || !read || !toggle || !active) return;
+  terminalView = view;
+  terminalViews.set(active.id, view);
+  viewport.dataset.view = view;
+  canvas.hidden = view === "read";
+  read.hidden = view === "mirror";
+  toggle.textContent = view === "read" ? "Mirror" : "Read";
+  toggle.setAttribute(
+    "aria-label",
+    view === "read" ? "Show desktop mirror" : "Show readable text",
+  );
+  toggle.setAttribute("aria-pressed", String(view === "mirror"));
+  if (view === "read") {
+    paintReadable();
+    viewport.scrollTop = followingNewest ? viewport.scrollHeight : readPosition;
+  } else {
+    viewport.scrollTop = 0;
+    emulator?.refresh(0, emulator.rows - 1);
+    scaleTerminal();
+  }
+}
+function paintReadable() {
+  const read = root.querySelector<HTMLElement>(".terminal-read"),
+    viewport = root.querySelector<HTMLElement>(".terminal-viewport");
+  if (
+    !read ||
+    !viewport ||
+    terminalView !== "read" ||
+    readSource === currentText
+  )
+    return;
+  readSource = currentText;
+  const position = readPosition;
+  const content = document.createDocumentFragment();
+  for (const line of readableLines(currentText)) {
+    content.append(
+      line.kind === "rule"
+        ? element("hr", "read-rule")
+        : element("div", "read-line", line.text),
+    );
+  }
+  read.replaceChildren(content);
+  viewport.scrollTop = followingNewest ? viewport.scrollHeight : position;
+}
 function updateTerminalInfo() {
   const info = document.querySelector("#terminal-info");
   if (info && active)
     info.textContent = `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"}`;
 }
 function scaleTerminal() {
+  if (terminalView !== "mirror") return;
   const canvas = document.querySelector<HTMLElement>(".terminal-canvas"),
     viewport = document.querySelector<HTMLElement>(".terminal-viewport");
   if (!canvas || !viewport || !emulator) return;
@@ -442,6 +534,7 @@ function paint(
   dimensions(cols, rows);
   if (!emulator) return;
   currentText = text;
+  paintReadable();
   const target = emulator,
     id = active?.id,
     generation = screenGeneration;
@@ -676,6 +769,7 @@ function frame(message: Frame) {
           (_, i) =>
             target.buffer.active.getLine(i)?.translateToString(true) ?? "",
         ).join("\n");
+        paintReadable();
         scaleTerminal();
         renderChoices();
       });

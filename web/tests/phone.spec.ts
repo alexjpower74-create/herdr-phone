@@ -275,9 +275,7 @@ test("approval and slash menu controls send exact acknowledged keys", async ({
       { keys: ["down"] },
       { keys: ["enter"] },
     ]);
-  await expect(page.locator(".xterm-accessibility-tree")).toContainText(
-    "Model: Quick",
-  );
+  await expect(page.locator(".terminal-read")).toContainText("Model: Quick");
   await expect.poll(() => taps).toBe(6);
   expect(taps).toBeLessThanOrEqual(6);
   test.info().annotations.push({
@@ -444,9 +442,7 @@ test("plain snapshots cannot execute terminal control sequences", async ({
       text: "BEFORE\x1b[2JAFTER",
     }),
   );
-  await expect(page.locator(".xterm-accessibility-tree")).toContainText(
-    "BEFORE[2JAFTER",
-  );
+  await expect(page.locator(".terminal-read")).toContainText("BEFORE[2JAFTER");
 });
 
 test("500 character compose preserves literal text and sends only on deliberate submission", async ({
@@ -716,9 +712,7 @@ test("all named keybar keys and slash commands use their documented routes", asy
     await page.getByLabel("Type to terminal").fill(command);
     await page.getByLabel("Type to terminal").press("Enter");
     await expect(page.getByLabel("Type to terminal")).toHaveValue("");
-    await expect(page.locator(".xterm-accessibility-tree")).toContainText(
-      "Select model",
-    );
+    await expect(page.locator(".terminal-read")).toContainText("Select model");
   }
   expect(
     calls

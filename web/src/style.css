@@ -242,6 +242,25 @@ h2 {
   border-bottom-color: #a5b7d0;
   background: #1c1d21;
 }
+.tab-header {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+}
+.tab-header .tabs {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+.view-toggle {
+  flex: none;
+  min-width: 64px;
+  margin-right: 8px;
+  padding: 0 10px;
+  color: #a5b7d0;
+  font-size: 12px;
+}
 .terminal-info {
   color: var(--muted);
   font-size: 11px;
@@ -256,18 +275,43 @@ h2 {
   overflow-x: hidden;
   padding: 0 12px;
   cursor: text;
+  touch-action: pan-x pan-y pinch-zoom;
+  overflow-anchor: none;
 }
 .terminal-canvas {
   transform-origin: top left;
   position: absolute;
   left: 12px;
   top: 0;
+  pointer-events: none;
 }
-.terminal-viewport:after {
+.terminal-viewport[data-view="mirror"]:after {
   content: "";
   display: block;
   height: var(--terminal-height, 100px);
   pointer-events: none;
+}
+.terminal-read {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 4px 0 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #d8d8df;
+}
+.read-line {
+  min-height: 1.55em;
+}
+.read-rule {
+  margin: 10px 0;
+  height: 0;
+  border: 0;
+  border-top: 1px solid #34363e;
+}
+.terminal-canvas[hidden],
+.terminal-read[hidden] {
+  display: none;
 }
 .xterm .xterm-viewport {
   overflow: hidden !important;
