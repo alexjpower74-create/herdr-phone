@@ -890,10 +890,11 @@ async function submitDraft(id: string, forceScreenId?: string, captured?: Submis
     if (saved.revision === submission.revision) clearDraft(saved);
   } catch (error) {
     if (!client.token) return;
-    const reason = validSubmission(submission) ? (error as Error).message : "Sending was cancelled.";
+    const reason = validSubmission(submission) ? (error as Error).message : "Pending input was cancelled.";
+    const retained = submission.files.length ? "Draft and files retained." : "Draft retained.";
     notice(dispatched
-      ? `${reason} Draft and files retained. Delivery may be unknown; check the terminal before sending again.`
-      : `${reason} Nothing was sent. Draft and files retained.`);
+      ? `${reason} ${retained} Delivery may be unknown; check the terminal before sending again.`
+      : `${reason} Nothing was sent. ${retained}`);
     if (error instanceof ApiError && error.code === "terminal_blocked" && !forceScreenId && validSubmission(submission)) {
       const screen = await refreshScreen(id);
       if (screen && validSubmission(submission)) {
