@@ -3,6 +3,9 @@
 These 390 × 844 WebKit captures use neutral mock data. They demonstrate the
 browser layout, not a completed real-phone integration.
 
+- `conversation-default-webkit.png`: `d15f139`, showing the default saved
+  conversation after live replies, with Terminal view in the header and compose
+  and key controls available below. The appearance of Conversation is unchanged.
 - `home-webkit.png` and `pairing-webkit.png`: web slice `d5e27f0`.
 - `terminal-webkit.png`: web slice `89eb1d3`; terminal code unchanged by the
   later logo asset update.

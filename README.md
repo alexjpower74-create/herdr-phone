@@ -102,6 +102,8 @@ See the [colour preview](docs/screens/terminal-colours-after-webkit.png),
 [history preview](docs/screens/terminal-history-after-webkit.png), and short
 [before/after display recording](docs/screens/terminal-display-before-after.mp4),
 all captured with neutral disposable-terminal output.
+The [default view preview](docs/screens/conversation-default-webkit.png) shows
+Conversation with live replies and the Terminal view button.
 The [saved conversation preview](docs/screens/conversation-history-webkit.png)
 shows the first message reached through paged history on a phone.
 The [attachment preview](docs/screens/attachments-webkit.png) shows photo,
