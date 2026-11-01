@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Observer, type ObserverFactory, type ObserverOutput } from "./observer";
 import { start } from "./index";
+import { Core } from "./core";
 import { Store } from "./security";
 const wait = async (condition: () => boolean) => {
   for (let i = 0; i < 300; i++) { if (condition()) return; await Bun.sleep(10); }
@@ -125,5 +126,79 @@ test("invalid watch budgets are rejected and finished screens explicitly fall ba
     await wait(() => f.messages.some(m => m.code === "observer_unavailable"));
     expect(f.messages.find(m => m.code === "observer_unavailable").watchId).toBe("finished");
     expect(f.observations).toHaveLength(0);
+  } finally { await f.cleanup(); }
+});
+
+class ControlledCore extends Core {
+  writes: { channel: number; kind: number; body: Buffer }[] = [];
+  killed = false;
+  resolveAttach!: (value: any) => void;
+  override call() { return new Promise(resolve => this.resolveAttach = resolve); }
+  constructor() {
+    super();
+    this.process = { stdin: { write: (bytes: Buffer) => {
+      this.writes.push({ channel: bytes.readUInt32LE(), kind: bytes[4], body: bytes.subarray(9) }); return true;
+    } } } as any;
+  }
+  override close() { this.killed = true; }
+  data(bytes = Buffer.from("data"), kind = 0) { this.onFrame!({ channel: 7, kind, body: bytes }); }
+  attach() { this.resolveAttach({ channel: 7, terminal: { cols: 80, rows: 24 } }); }
+}
+test("observer credits only delivered chunks, closes failures and bounds pending data", async () => {
+  const core = new ControlledCore();
+  let deliver!: () => void, failed = 0;
+  const observer = new Observer({ terminalId: "t1", history: 500, cols: 80, rows: 24 }, () => new Promise<void>(resolve => deliver = resolve), () => failed++, core);
+  core.data(); // first paint before the reply
+  core.attach();
+  await wait(() => !!deliver);
+  expect(core.writes).toHaveLength(0);
+  // While delivery is paused, the queue stays bounded and fails closed.
+  for (let i = 0; i < 65; i++) core.data(Buffer.alloc(16384));
+  expect(observer.closed).toBe(true);
+  expect(core.killed).toBe(true);
+  expect(failed).toBe(1);
+  expect(core.writes.map(f => f.kind)).toEqual([2]);
+  deliver();
+  await Bun.sleep(0);
+  expect(core.writes.map(f => f.kind)).toEqual([2]);
+});
+test("observer teardown after output rejection and core CLOSE preserves last data order", async () => {
+  for (const reject of [true, false]) {
+    const core = new ControlledCore(), seen: string[] = [];
+    let failed = 0;
+    const observer = new Observer({ terminalId: "t1", history: 0, cols: 80, rows: 24 }, async bytes => {
+      seen.push(bytes.toString()); if (reject) throw Error("Slow consumer");
+    }, () => failed++, core);
+    core.data(Buffer.from("final"));
+    core.data(Buffer.from("{}"), 2);
+    core.attach();
+    await wait(() => observer.closed);
+    expect(seen).toEqual(["final"]);
+    expect(failed).toBe(1);
+    expect(core.writes.map(f => f.kind)).toEqual(reject ? [2] : [1, 2]);
+    expect(core.killed).toBe(true);
+  }
+});
+test("observer errors release the socket watch and prohibit late chunks", async () => {
+  const f = await socketFixture();
+  try {
+    f.ws.send(JSON.stringify({ type: "watch", terminalId: "t1", watchId: "failed" }));
+    await wait(() => f.observations.length === 1);
+    const entry = f.observations[0];
+    entry.fail();
+    await wait(() => f.messages.some(m => m.code === "observer_unavailable"));
+    expect(entry.closed).toBe(true);
+    await expect(entry.output(Buffer.from("late"))).rejects.toThrow();
+  } finally { await f.cleanup(); }
+});
+test("oversized observer output closes socket and releases channel", async () => {
+  const f = await socketFixture();
+  try {
+    f.ws.send(JSON.stringify({ type: "watch", terminalId: "t1", watchId: "large" }));
+    await wait(() => f.observations.length === 1);
+    const closed = new Promise<number>(resolve => f.ws.onclose = e => resolve(e.code));
+    await expect(f.observations[0].output(Buffer.alloc(16385))).rejects.toThrow();
+    expect(await closed).toBe(1013);
+    expect(f.observations[0].closed).toBe(true);
   } finally { await f.cleanup(); }
 });

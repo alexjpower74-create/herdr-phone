@@ -553,7 +553,10 @@ export function start(
       else {
         ws.data.connected = false;
         ws.data.revision = undefined;
-        if (sockets.has(ws)) send(ws, { type: "connection", connected: false });
+        if (sockets.has(ws)) {
+          try { send(ws, { type: "connection", connected: false }); }
+          finally { closeSocket(ws, 1012, "Core reconnecting"); }
+        }
       }
     } finally {
       ws.data.busy = false;

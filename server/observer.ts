@@ -17,7 +17,6 @@ export type ObserverFactory = (
 // One framed connection per observation. It never carries input or display facts.
 // Frames may precede the attach reply; keep them until the channel is known.
 export class Observer implements Observation {
-  core = new Core();
   channel?: number;
   closed = false;
   queue: { channel: number; kind: number; body: Buffer }[] = [];
@@ -29,6 +28,7 @@ export class Observer implements Observation {
     request: ObserverRequest,
     private output: ObserverOutput,
     private failed: () => void,
+    public core = new Core(),
   ) {
     this.core.onDisconnect = () => this.fail();
     this.core.onFrame = (f) => {
