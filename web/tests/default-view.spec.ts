@@ -22,7 +22,7 @@ async function setup(page: Page, preference: string | null = null, deepLink = fa
     ws.send(JSON.stringify({ type: "state", state }));
     ws.onMessage(raw => {
       const frame = JSON.parse(String(raw));
-      if (frame.type === "watch") model.watches.set(ws, frame);
+      if (frame.type === "watch") model.watches.set(ws, { terminalId: frame.terminalId, watchId: frame.watchId });
       else if (frame.type === "unwatch") model.watches.delete(ws);
     });
   });
