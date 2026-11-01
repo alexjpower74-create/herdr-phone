@@ -121,7 +121,7 @@ export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE
     }
     const previous = cache.get(terminalId);
     const expected = cursor || (previous ? { binding: previous.result.binding, size: previous.result.size, fingerprint: previous.result.fingerprint, guards: previous.result.guards } : undefined);
-    const request = { pid, cwd: facts.foreground?.cwd, sources: config.sources, expected, before: cursor?.before, join: cursor?.join, cached: !cursor ? previous?.result.fingerprint : undefined };
+    const request = { terminal: [terminalId, facts.pid, facts.created_ms], pid, cwd: facts.foreground?.cwd, sources: config.sources, expected, before: cursor?.before, join: cursor?.join, cached: !cursor ? previous?.result.fingerprint : undefined };
     let result = await run(config, request);
     let generation = cursor?.generation || previous?.generation || "";
     if (result.error === "changed" && !cursor) {
