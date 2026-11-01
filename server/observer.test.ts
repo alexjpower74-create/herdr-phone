@@ -218,3 +218,41 @@ test("geometry changes release affected observations for a fresh replay via even
     } finally { await f.cleanup(); }
   }
 });
+
+test("observer failure notification tolerates a throwing socket send", async () => {
+  const f = await socketFixture();
+  try {
+    f.ws.send(JSON.stringify({ type: "watch", terminalId: "t1", watchId: "throwing" }));
+    await wait(() => f.observations.length === 1);
+    const socket = [...f.app.sockets][0];
+    Object.defineProperty(socket, "send", { value() { throw Error("Transport lost"); } });
+    const closed = new Promise<number>(resolve => f.ws.onclose = e => resolve(e.code));
+    expect(() => f.observations[0].fail()).not.toThrow();
+    expect(await closed).toBe(1013);
+    expect(f.observations[0].closed).toBe(true);
+    expect(f.app.sockets.size).toBe(0);
+  } finally { await f.cleanup(); }
+});
+test("observer disconnect callback and close contain notification and pipe errors", async () => {
+  const core = new ControlledCore();
+  const observer = new Observer({ terminalId: "t1", history: 0, cols: 80, rows: 24 }, async () => {}, () => { throw Error("Notification lost"); }, core);
+  core.attach();
+  await Bun.sleep(0);
+  core.process!.stdin.write = () => { throw Error("Pipe lost"); };
+  expect(() => core.onDisconnect!()).not.toThrow();
+  expect(observer.closed).toBe(true);
+  expect(core.killed).toBe(true);
+});
+test("tick contains a throwing disconnection notification", async () => {
+  const f = await socketFixture();
+  try {
+    await wait(() => f.messages.some(m => m.type === "state"));
+    const socket = [...f.app.sockets][0];
+    Object.defineProperty(socket, "send", { value() { throw Error("Transport lost"); } });
+    f.core.call = async () => { throw Error("Core lost"); };
+    const closed = new Promise<number>(resolve => f.ws.onclose = e => resolve(e.code));
+    expect(await closed).toBe(1013);
+    expect(f.app.sockets.size).toBe(0);
+    await Bun.sleep(0); // Bun test also fails on any unhandled tick rejection.
+  } finally { await f.cleanup(); }
+});
