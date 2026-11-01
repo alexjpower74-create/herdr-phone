@@ -151,7 +151,7 @@ def read(req):
         st=os.fstat(f.fileno())
         if not stat.S_ISREG(st.st_mode): raise Problem('invalid')
         if st.st_size>MAX_FILE: raise Problem('limit')
-        fingerprint=[st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns]
+        fingerprint=list(map(str,[st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns]))
         binding=hashlib.sha256(json.dumps([identity(rootproc),identity(proc),path,fmt,sid,st.st_dev,st.st_ino]).encode()).hexdigest()
         expected=req.get('expected'); before=req.get('before')
         if expected and expected['binding']!=binding: raise Problem('changed')

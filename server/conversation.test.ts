@@ -191,3 +191,21 @@ test("revocation during a saved-history read rejects response and stop releases 
   } finally { release(); app.stop(); await rm(root, { recursive: true, force: true }); }
   expect(closed).toBe(true);
 });
+
+test("unchanged latest poll skips parsing using lossless filesystem fingerprints", async () => {
+  await fixture("responses", async ({ root }: any) => {
+    const script = await readFile(new URL("conversation-reader.py", import.meta.url), "utf8");
+    const read = async (extra = {}) => {
+      const argument = Buffer.from(JSON.stringify({ pid: process.pid, cwd: process.cwd(), sources: [{ format: "responses", root }], ...extra })).toString("base64");
+      const child = Bun.spawn(["python3", "-", argument], { stdin: new Blob([script]), stdout: "pipe", stderr: "ignore" });
+      const result = await new Response(child.stdout).json();
+      expect(await child.exited).toBe(0);
+      return result;
+    };
+    const first = await read();
+    expect(first.fingerprint.every((v: unknown) => typeof v === "string")).toBe(true);
+    const second = await read({ cached: first.fingerprint, expected: { binding: first.binding, size: first.size, digest: first.digest } });
+    expect(second.unchanged).toBe(true);
+    expect(second.turns).toBeUndefined();
+  });
+});

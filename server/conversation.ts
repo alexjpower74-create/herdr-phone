@@ -18,7 +18,7 @@ export type TranscriptSource = ((terminalId: string, before?: string) => Promise
 type Source = { format: "messages" | "responses"; root: string; sessions?: string };
 type Machine = { ssh?: string; sources: Source[] };
 type Cursor = { terminal: string; binding: string; size: number; digest: string; before: number; generation: string };
-type Result = { binding: string; size: number; digest: string; fingerprint: number[]; turns: any[]; next: number | null; unchanged?: boolean; error?: string };
+type Result = { binding: string; size: number; digest: string; fingerprint: string[]; turns: any[]; next: number | null; unchanged?: boolean; error?: string };
 type Cached = { result: Result; generation: string; page: ConversationPage };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const unavailable = (reason: ConversationPage["reason"]): ConversationPage => ({ available: false, reason, session: null, revision: "", turns: [], nextCursor: null });
