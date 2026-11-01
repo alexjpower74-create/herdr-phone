@@ -68,7 +68,7 @@ export type ConversationPage = {
   session: string | null;
   revision: string;
   warnings?: Array<"long_output_trimmed" | "scan_limited">;
-  turns: { id: string; entries: { id: string; role: "user" | "assistant" | "tool"; text: string }[] }[];
+  turns: { id: string; continuesPrevious?: boolean; entries: { id: string; role: "user" | "assistant" | "tool"; text: string }[] }[];
   nextCursor: string | null;
 };
 

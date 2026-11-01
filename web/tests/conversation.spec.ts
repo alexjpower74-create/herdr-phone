@@ -10,7 +10,7 @@ function turns(format: "messages" | "responses", count = 173): ConversationPage[
   ] }));
 }
 async function setup(page: Page, format: "messages" | "responses" = "messages", initial: { delayLatest?: boolean; unavailable?: boolean } = {}) {
-  const model = { data: turns(format), session: format, status: 200, code: "unavailable", network: false, reason: "not_found" as ConversationPage["reason"], page: undefined as ConversationPage | undefined, unavailable: initial.unavailable ?? false, requests: [] as string[], pending: undefined as Route | undefined, delayOlder: false, delayLatest: initial.delayLatest ?? false, sockets: [] as WebSocketRoute[] };
+  const model = { data: turns(format), session: format, status: 200, code: "unavailable", network: false, malformed: false, reason: "not_found" as ConversationPage["reason"], page: undefined as ConversationPage | undefined, unavailable: initial.unavailable ?? false, requests: [] as string[], pending: undefined as Route | undefined, delayOlder: false, delayLatest: initial.delayLatest ?? false, sockets: [] as WebSocketRoute[] };
   const result = (before?: string): ConversationPage => {
     const end = before ? Number(before) : model.data.length;
     const start = Math.max(0, end - 50);
@@ -30,6 +30,7 @@ async function setup(page: Page, format: "messages" | "responses" = "messages", 
       model.requests.push(url.pathname + url.search);
       const before = url.searchParams.get("before") ?? undefined;
       if ((before && model.delayOlder) || (!before && model.delayLatest)) { model.pending = route; return; }
+      if (model.malformed) return route.fulfill({ body: "{broken", contentType: "application/json" });
       if (model.network) return route.abort("failed");
       if (model.status !== 200) return route.fulfill({ status: model.status, json: { error: { code: model.code, message: "private runtime information /private/transcript <img src=x>" } } });
       return route.fulfill({ json: model.page ?? result(before) });
@@ -251,6 +252,10 @@ test("distinct unavailable reasons and reader errors recover without private det
     await expect(page.locator(".conversation")).not.toContainText("private runtime information");
     await expect(page.locator(".conversation img")).toHaveCount(0);
   }
+  model.malformed = true;
+  await page.getByRole("button", { name: "Retry conversation" }).tap();
+  await expect(page.getByText("Could not load saved conversation. Please retry.", { exact: true })).toBeVisible();
+  model.malformed = false;
   model.network = true;
   await page.getByRole("button", { name: "Retry conversation" }).tap();
   await expect(page.getByText("Could not reach the bridge. Check your connection and retry.", { exact: true })).toBeVisible();
@@ -258,4 +263,26 @@ test("distinct unavailable reasons and reader errors recover without private det
   await page.getByRole("button", { name: "Retry conversation" }).tap();
   await expect(page.locator('[data-turn="turn-172"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry conversation" })).toBeHidden();
+});
+
+
+test("bounded turn fragments prepend older entries and reconcile latest overlap", async ({ page }) => {
+  const { model } = await setup(page, "messages", { delayLatest: true });
+  await expect.poll(() => !!model.pending).toBe(true);
+  const entry = (id: string, text: string) => ({ id, role: "assistant" as const, text });
+  model.delayLatest = false;
+  model.page = { available: true, session: "fragments", revision: "1", turns: [{ id: "fragment", continuesPrevious: true, entries: [entry("b", "Newest B"), entry("c", "Newest C")] }], nextCursor: "older" };
+  await model.pending!.fulfill({ json: model.page });
+  await expect(page.getByText("Newest C", { exact: true })).toBeVisible();
+  const older = page.getByRole("button", { name: "Load older messages" });
+  await hit(older);
+  model.page = { ...model.page, turns: [{ id: "fragment", entries: [entry("a", "Older A"), entry("b", "Stale B")] }], nextCursor: null };
+  await older.tap();
+  await expect(page.locator(".conversation [data-entry]")).toHaveText(["Older A", "Newest B", "Newest C"]);
+  model.page = { ...model.page, revision: "2", turns: [{ id: "shifted-fragment", continuesPrevious: true, entries: [entry("c", "Updated C"), entry("d", "Latest D")] }], nextCursor: "new-window" };
+  await expect(page.locator(".conversation [data-entry]")).toHaveText(["Older A", "Newest B", "Updated C", "Latest D"], { timeout: 7000 });
+  await expect(page.locator(".conversation article")).toHaveCount(1);
+  model.page = { ...model.page, revision: "3", turns: [{ id: "shifted-again", continuesPrevious: true, entries: [entry("c", "Updated C again"), entry("d", "Latest D")] }], nextCursor: "new-window" };
+  await expect(page.locator('[data-entry="c"]')).toHaveText("Updated C again", { timeout: 7000 });
+  await expect(page.locator(".conversation [data-entry]")).toHaveCount(4);
 });
