@@ -24,6 +24,18 @@ export type State = {
   spaces: Space[];
   programs: { id: string; name: string }[];
 };
+export type Prompt = {
+  id: string;
+  kind: "approval" | "menu";
+  options: { id: string; label: string; keys: string[] }[];
+};
+export type Screen = {
+  terminal: TerminalInfo;
+  text: string;
+  complete: true;
+  screenId: string;
+  prompt: Prompt | null;
+};
 export type Frame =
   | { type: "state"; state: State }
   | {
@@ -32,6 +44,8 @@ export type Frame =
       cols: number;
       rows: number;
       text: string;
+      screenId: string;
+      prompt: Prompt | null;
     }
   | {
       type: "output";

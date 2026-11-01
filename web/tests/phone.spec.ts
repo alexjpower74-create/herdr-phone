@@ -11,7 +11,7 @@ const fixture = {
       id: "work",
       machineId: "local",
       name: "Workbench",
-      cwd: "",
+      cwd: "/workspace/sample",
       repo: "sample",
       branch: "main",
       color: "#199f91",
@@ -82,6 +82,11 @@ async function capture(page: Page, name: string) {
     });
   }
 }
+const suppliedPrompt = {
+  id: "dialog-1",
+  kind: "approval",
+  options: [{ id: "yes", label: "Yes", keys: ["1", "enter"] }, { id: "no", label: "No", keys: ["2", "enter"] }],
+};
 const prompt =
   "Allow this operation?\n› 1. Yes\n  2. No\nPress Enter to confirm";
 type Call = { path: string; body: any; auth: string | undefined };
@@ -106,6 +111,8 @@ async function setup(page: Page, paired = true) {
             cols: 100,
             rows: 30,
             text: msg.terminalId === "t1" ? prompt : "Ready for input",
+            screenId: "screen-1",
+            prompt: msg.terminalId === "t1" ? suppliedPrompt : null,
           }),
         );
     });
@@ -135,20 +142,22 @@ async function setup(page: Page, paired = true) {
           terminal,
           text: id === "t1" ? prompt : "Ready for input",
           complete: true,
+          screenId: "screen-1",
+          prompt: id === "t1" ? suppliedPrompt : null,
         },
       });
     }
     if (path === "/api/device") return route.fulfill({ status: 204 });
-    if (path === "/api/terminals/t1/input") typed += body.text;
-    if (path === "/api/terminals/t1/keys") {
+    if (path === "/api/terminals/t1/send") typed = body.text;
+    if (path === "/api/terminals/t1/keys" || path === "/api/terminals/t1/send") {
       let screen: string | undefined;
-      if (menu && body.keys.includes("down")) {
+      if (menu && body.keys?.includes("down")) {
         selection = 1;
         screen = "Select model\n  Balanced\n› Quick\nUse ↑/↓ and Enter";
-      } else if (menu && body.keys.includes("enter")) {
+      } else if (menu && body.keys?.includes("enter")) {
         menu = false;
         screen = `Model: ${selection ? "Quick" : "Balanced"}`;
-      } else if (typed === "/model" && body.keys.includes("enter")) {
+      } else if (["/model", "/effort", "/mcp"].includes(typed) && path.endsWith("/send")) {
         menu = true;
         screen = "Select model\n› Balanced\n  Quick\nUse ↑/↓ and Enter";
       }
@@ -161,6 +170,8 @@ async function setup(page: Page, paired = true) {
               cols: 100,
               rows: 30,
               text: screen,
+              screenId: "menu-screen",
+              prompt: null,
             }),
           );
     }
@@ -224,9 +235,9 @@ test("approval and slash menu controls send exact acknowledged keys", async ({
   await page.getByRole("button", { name: "Yes", exact: true }).tap();
   await expect
     .poll(() =>
-      calls.filter((c) => c.path.endsWith("/keys")).map((c) => c.body),
+      calls.filter((c) => c.path.endsWith("/prompt")).map((c) => c.body),
     )
-    .toContainEqual({ keys: ["1", "enter"] });
+    .toContainEqual({ promptId: "dialog-1", optionId: "yes" });
   await expect(
     page.getByRole("button", { name: "Yes", exact: true }),
   ).toHaveCount(0);
@@ -238,13 +249,12 @@ test("approval and slash menu controls send exact acknowledged keys", async ({
   await expect
     .poll(() =>
       calls
-        .filter((c) => c.path.endsWith("/input") || c.path.endsWith("/keys"))
+        .filter((c) => c.path.endsWith("/send") || c.path.endsWith("/keys") || c.path.endsWith("/prompt"))
         .map((c) => c.body),
     )
     .toEqual([
-      { keys: ["1", "enter"] },
+      { promptId: "dialog-1", optionId: "yes" },
       { text: "/model" },
-      { keys: ["enter"] },
       { keys: ["down"] },
       { keys: ["enter"] },
     ]);
@@ -267,9 +277,10 @@ test("remote terminal stays qualified and old-tab screens are ignored", async ({
   const { calls, sockets } = await setup(page);
   await page.getByRole("button", { name: "R Remote work" }).tap();
   await page.getByLabel("Type to terminal").fill("hello");
+  await page.getByRole("button", { name: "Send", exact: true }).tap();
   await expect
     .poll(() =>
-      calls.some((c) => c.path === "/api/terminals/remote%2Ft3/input"),
+      calls.some((c) => c.path === "/api/terminals/remote%2Ft3/send"),
     )
     .toBe(true);
   sockets[0].send(
@@ -298,9 +309,9 @@ test("pending input retains its terminal and failures cancel queued input", asyn
   let release!: () => void;
   const blocked = new Promise<void>((r) => (release = r));
   let received = false;
-  await page.route("**/api/terminals/t1/input", async (route) => {
+  await page.route("**/api/terminals/t1/send", async (route) => {
     calls.push({
-      path: "/api/terminals/t1/input",
+      path: "/api/terminals/t1/send",
       body: route.request().postDataJSON(),
       auth: undefined,
     });
@@ -313,16 +324,18 @@ test("pending input retains its terminal and failures cancel queued input", asyn
   });
   await open(page);
   await page.getByLabel("Type to terminal").fill("first");
+  await page.getByRole("button", { name: "Send", exact: true }).tap();
   await expect.poll(() => received).toBe(true);
-  await page.getByRole("button", { name: "enter", exact: true }).tap();
+  await page.getByRole("button", { name: "down", exact: true }).tap();
   await page.getByRole("button", { name: "Check", exact: true }).tap();
   await page.getByLabel("Type to terminal").fill("second");
+  await page.getByRole("button", { name: "Send", exact: true }).tap();
   release();
   await expect(page.getByRole("status")).toContainText("not replayed");
   await expect
     .poll(() =>
       calls.some(
-        (c) => c.path === "/api/terminals/t2/input" && c.body.text === "second",
+        (c) => c.path === "/api/terminals/t2/send" && c.body.text === "second",
       ),
     )
     .toBe(true);
@@ -342,6 +355,8 @@ test("stale historical approval text cannot create a button", async ({
       cols: 100,
       rows: 30,
       text: prompt + "\nFinished.\n$ ",
+      screenId: "history",
+      prompt: null,
     }),
   );
   await expect(
@@ -374,15 +389,16 @@ test("core disconnect cancels unsent input without replay", async ({
   let release!: () => void;
   const hold = new Promise<void>((r) => (release = r));
   let received = false;
-  await page.route("**/api/terminals/t1/input", async (route) => {
+  await page.route("**/api/terminals/t1/send", async (route) => {
     received = true;
     await hold;
     await route.fulfill({ json: { ok: true } });
   });
   await open(page);
   await page.getByLabel("Type to terminal").fill("first");
+  await page.getByRole("button", { name: "Send", exact: true }).tap();
   await expect.poll(() => received).toBe(true);
-  await page.getByRole("button", { name: "enter", exact: true }).tap();
+  await page.getByRole("button", { name: "down", exact: true }).tap();
   sockets[0].send(JSON.stringify({ type: "connection", connected: false }));
   await expect(page.getByRole("status")).toContainText(
     "Pending input was cancelled",
@@ -391,8 +407,9 @@ test("core disconnect cancels unsent input without replay", async ({
   sockets[0].send(JSON.stringify({ type: "connection", connected: true }));
   await page.getByRole("button", { name: "Check", exact: true }).tap();
   await page.getByLabel("Type to terminal").fill("ready");
+  await page.getByRole("button", { name: "Send", exact: true }).tap();
   await expect
-    .poll(() => calls.some((c) => c.path === "/api/terminals/t2/input"))
+    .poll(() => calls.some((c) => c.path === "/api/terminals/t2/send"))
     .toBe(true);
   expect(calls.filter((c) => c.path === "/api/terminals/t1/keys")).toHaveLength(
     0,

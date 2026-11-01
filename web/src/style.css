@@ -457,3 +457,24 @@ dialog::backdrop {
     padding-right: max(12px, calc((100% - 800px) / 2));
   }
 }
+.compose {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+.compose .terminal-input {
+  min-width: 0;
+  flex: 1;
+  height: 70px;
+}
+.compose-send {
+  margin-top: 8px;
+  min-height: 70px;
+}
+.blocked-screen {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 35dvh;
+  overflow: auto;
+  font-size: 12px;
+}

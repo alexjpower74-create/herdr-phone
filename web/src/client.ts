@@ -1,9 +1,10 @@
-import type { Frame, State, TerminalInfo } from "./types";
+import type { Frame, State, Screen } from "./types";
 const TOKEN_KEY = "herdr-phone.device";
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public code = "",
   ) {
     super(message);
   }
@@ -40,6 +41,7 @@ export class Client {
       throw new ApiError(
         response.status,
         data?.error?.message ?? "The bridge could not complete this request.",
+        data?.error?.code,
       );
     }
     return response.status === 204 ? (undefined as T) : response.json();
@@ -56,28 +58,22 @@ export class Client {
     return this.request<State>("/state");
   }
   screen(id: string) {
-    return this.request<{
-      terminal: TerminalInfo;
-      text: string;
-      complete: true;
-    }>(`/terminals/${encodeURIComponent(id)}/screen`);
+    return this.request<Screen>(`/terminals/${encodeURIComponent(id)}/screen`);
   }
-  input(id: string, kind: "input" | "keys", value: string | string[]) {
+  action(id: string, kind: "send" | "keys" | "prompt", body: unknown) {
     const epoch = this.epochs.get(id) ?? 0;
     const next = (this.queues.get(id) ?? Promise.resolve())
       .catch(() => {})
-      .then(() => {
+      .then(async () => {
         if (epoch !== (this.epochs.get(id) ?? 0))
-          throw new Error(
-            "Pending input was cancelled. Check the terminal before typing again.",
-          );
-        return this.request(
-          `/terminals/${encodeURIComponent(id)}/${kind}`,
-          kind === "keys" ? { keys: value } : { text: value },
-        );
+          throw new Error("Pending input was cancelled. Check the terminal before sending again.");
+        const result = await this.request(`/terminals/${encodeURIComponent(id)}/${kind}`, body);
+        if (epoch !== (this.epochs.get(id) ?? 0))
+          throw new Error("Delivery outcome is unknown after disconnection.");
+        return result;
       })
       .catch((error) => {
-        this.epochs.set(id, (this.epochs.get(id) ?? 0) + 1);
+        if (epoch === (this.epochs.get(id) ?? 0)) this.epochs.set(id, epoch + 1);
         throw error;
       });
     this.queues.set(id, next);
