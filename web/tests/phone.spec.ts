@@ -241,6 +241,10 @@ test("remote terminal stays qualified and old-tab screens are ignored", async ({
   await expect(
     page.getByRole("button", { name: "Yes", exact: true }),
   ).toHaveCount(0);
+  sockets[0].send(
+    JSON.stringify({ type: "error", code: "probe", message: "Frame boundary" }),
+  );
+  await expect(page.getByRole("status")).toHaveText("Frame boundary");
   await expect(page.locator("#terminal-info")).toContainText("100 × 30");
   expect(new URL(page.url()).hash).toBe("#terminal=remote%2Ft3");
 });

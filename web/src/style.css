@@ -104,13 +104,13 @@ h2 {
 .spaces {
   overflow: auto;
   flex: 1;
-  padding: 4px 12px;
+  padding: 4px;
 }
 .section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-left: 4px;
+  padding-left: 12px;
   color: var(--muted);
   height: 44px;
 }
@@ -132,7 +132,7 @@ h2 {
   text-align: left;
   padding: 0 8px;
   border-radius: 7px;
-  padding-right: 52px;
+  padding-right: 8px;
 }
 .machine-name {
   flex: 1;
@@ -143,12 +143,12 @@ h2 {
 }
 .machine-add {
   position: absolute;
-  right: 38px;
+  right: 62px;
   width: 44px;
   font-size: 18px;
 }
 .machine-fold .dot {
-  margin-right: 22px;
+  margin-right: 0;
 }
 .chevron {
   font-size: 17px;
