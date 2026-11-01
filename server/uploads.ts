@@ -38,6 +38,7 @@ export class Uploads {
   private tasks = new Set<Promise<unknown>>();
   private pruneController = new AbortController();
   private lastPrune = -Infinity;
+  private pruneAfter?: string;
   private closing?: Promise<void>;
   private pruneTimer: ReturnType<typeof setInterval>;
   constructor(private core: RPC, private store: Store, transport?: UploadTransport) {
@@ -79,10 +80,19 @@ export class Uploads {
     this.lastPrune = this.store.now();
     const work = async () => {
       const state = await this.store.read(), now = this.store.now();
-      const expired = (state.uploads || []).filter(r => r.expiresAt <= now || (r.status === "pending" && r.createdAt + 15 * 60000 <= now));
+      const expired = (state.uploads || [])
+        .filter(r => r.expiresAt <= now || (r.status === "pending" && r.createdAt + 15 * 60000 <= now))
+        .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      const after = this.pruneAfter;
+      const following = after ? expired.findIndex(record => record.id > after) : 0;
+      const start = following < 0 ? 0 : following;
       const deadline = Date.now() + 2000;
-      for (const record of expired.slice(0, 16)) {
+      for (let offset = 0; offset < Math.min(16, expired.length); offset++) {
         if (this.stopped || Date.now() >= deadline) break;
+        const record = expired[(start + offset) % expired.length];
+        // Advance before IO: failures and moved roots must also yield their place.
+        // An ID boundary survives successful removals and concurrent insertions.
+        this.pruneAfter = record.id;
         try {
           const target = await this.target(record.machine);
           if (target.root !== record.root) continue;
