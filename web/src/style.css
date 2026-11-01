@@ -43,6 +43,7 @@ body {
 #app[data-keyboard-open="true"] .terminal-input,
 #app[data-keyboard-open="true"] .attach-files,
 #app[data-keyboard-open="true"] .compose-send { min-height: 46px; }
+#app[data-keyboard-open="true"] .terminal-input { height: 46px; }
 button,
 input,
 textarea,

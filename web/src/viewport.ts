@@ -2,6 +2,8 @@
 export function trackViewport(app: HTMLElement): () => void {
   const viewport = window.visualViewport;
   let frame = 0;
+  let layoutHeight = window.innerHeight;
+  let layoutWidth = window.innerWidth;
   const update = () => {
     frame = 0;
     // A pinch changes the visual area without opening a keyboard. Leave the
@@ -10,9 +12,14 @@ export function trackViewport(app: HTMLElement): () => void {
     const height = viewport?.height ?? window.innerHeight;
     const top = viewport?.offsetTop ?? 0;
     if (!Number.isFinite(height) || height <= 0 || !Number.isFinite(top)) return;
+    const editing = document.activeElement instanceof HTMLElement &&
+      document.activeElement.matches("input, textarea, [contenteditable='true']");
+    if (layoutWidth !== window.innerWidth || !editing) layoutHeight = window.innerHeight;
+    else layoutHeight = Math.max(layoutHeight, window.innerHeight);
+    layoutWidth = window.innerWidth;
     app.style.setProperty("--app-height", `${height}px`);
     app.style.setProperty("--app-top", `${Math.max(0, top)}px`);
-    app.dataset.keyboardOpen = String(height < window.innerHeight - 80);
+    app.dataset.keyboardOpen = String(height < layoutHeight - 80);
   };
   const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
   viewport?.addEventListener("resize", schedule);
