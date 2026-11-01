@@ -7,6 +7,11 @@ async function touch(page: Page, type: string, points: { id: number; x: number; 
   if (!session) throw new Error("Native WebKit touch dispatch is unavailable");
   await session.send("Input.dispatchTouchEvent", { type, touchPoints: points, modifiers: 0 });
 }
+async function wheel(page: Page, x: number, y: number, deltaY: number) {
+  const session = (page as any)._connection?.toImpl(page)?.delegate?._pageProxySession;
+  if (!session) throw new Error("Native WebKit wheel dispatch is unavailable");
+  await session.send("Input.dispatchWheelEvent", { x, y, deltaX: 0, deltaY, modifiers: 0 });
+}
 async function start(page: Page) {
   const fixture = await setup(page);
   await expect(page.locator('.conversation [data-entry="reply-19"]')).toBeVisible();
@@ -15,7 +20,7 @@ async function start(page: Page) {
     (window as any).touchTrust = [];
     (window as any).touchMoves = [];
     document.addEventListener("touchmove", e => (window as any).touchMoves.push(e.defaultPrevented));
-    for (const name of ['touchstart', 'touchmove', 'touchend']) document.addEventListener(name, e => (window as any).touchTrust.push(e.isTrusted), { capture: true });
+    for (const name of ['touchstart', 'touchmove', 'touchend']) document.addEventListener(name, e => (window as any).touchTrust.push({ type: e.type, trusted: e.isTrusted }), { capture: true });
   });
   const box = await page.locator('.terminal-viewport').boundingBox();
   expect(await page.locator('.terminal-viewport').evaluate(el => {
@@ -25,7 +30,9 @@ async function start(page: Page) {
       return hit === el || el.contains(hit);
     });
   })).toBe(true);
-  return { ...fixture, x: Math.round(box!.x + box!.width / 2), y: Math.round(box!.y + 30) };
+  const x = Math.round(box!.x + box!.width / 2), y = Math.round(box!.y + 30);
+  expect(await page.locator('.terminal-viewport').evaluate((el, { x, y }) => { const hit = document.elementFromPoint(x, y); return hit === el || el.contains(hit); }, { x, y })).toBe(true);
+  return { ...fixture, x, y };
 }
 async function drag(page: Page, x: number, y: number, dx = 0, dy = 100, cancel = false) {
   await touch(page, 'touchStart', [{ id: 1, x, y }]);
@@ -33,7 +40,7 @@ async function drag(page: Page, x: number, y: number, dx = 0, dy = 100, cancel =
   await touch(page, cancel ? 'touchCancel' : 'touchEnd', [{ id: 1, x: x + dx, y: y + dy }]);
 }
 test('deliberate top pull reveals earlier messages and returns to newest in Mirror and Read', async ({ page }) => {
-  const { x, y, model } = await start(page);
+  const { x, y, model, publishScreen } = await start(page);
   const watches = model.watchCalls.length;
   await page.locator('.terminal-input').fill('Keep this draft');
   await page.locator('input[type=file]').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('A saved attachment') });
@@ -44,6 +51,8 @@ test('deliberate top pull reveals earlier messages and returns to newest in Mirr
     await touch(page, 'touchStart', [{ id: 1, x, y }]);
     await touch(page, 'touchMove', [{ id: 1, x, y: y + 20 }]);
     await expect(page.getByText('Earlier messages', { exact: true })).toBeVisible();
+    publishScreen(`Screen update during ${mode} pull`);
+    await expect(page.locator('.terminal-history-hint')).toHaveText('Earlier messages');
     await expect(page.locator('.terminal-viewport')).toBeVisible();
     if (process.env.GESTURE_SHOTS) await page.screenshot({ path: `${process.env.GESTURE_SHOTS}/pull-${mode}.png` });
     await touch(page, 'touchMove', [{ id: 1, x, y: y + 110 }]);
@@ -53,12 +62,13 @@ test('deliberate top pull reveals earlier messages and returns to newest in Mirr
     await expect(host.getByText(`Newest ${mode} reply`)).toBeVisible();
     if (process.env.GESTURE_SHOTS) await page.screenshot({ path: `${process.env.GESTURE_SHOTS}/newest-${mode}.png` });
     await expect.poll(() => host.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThan(2);
-    await page.mouse.move(x, y + 120); await page.mouse.wheel(0, -500);
+    await wheel(page, x, y + 120, -500);
     await expect.poll(() => host.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeGreaterThan(100);
     await page.getByRole('button', { name: 'Terminal view', exact: true }).tap();
   }
-  expect(await page.evaluate(() => (window as any).touchTrust)).toEqual(expect.arrayContaining([true]));
-  expect(await page.evaluate(() => (window as any).touchTrust.every(Boolean))).toBe(true);
+  expect(await page.evaluate(() => (window as any).touchTrust.every((e: any) => e.trusted))).toBe(true);
+  const counts = await page.evaluate(() => (window as any).touchTrust.reduce((counts: any, e: any) => { counts[e.type] = (counts[e.type] || 0) + 1; return counts; }, {}));
+  expect(counts).toMatchObject({ touchstart: 4, touchmove: 4, touchend: 4 });
   await expect(page.locator('.terminal-input')).toHaveValue('Keep this draft');
   await expect(page.getByText('sample.txt', { exact: true })).toBeVisible();
   await expect(page.locator('.terminal-input')).not.toBeFocused();
@@ -107,9 +117,13 @@ test('touch beginning in scrollback cannot hand off after reaching the top', asy
   // is not implemented on this host, so no platform scrolling claim is made.
   await page.getByRole('button', { name: 'Show readable text' }).tap();
   await expect(page.locator('.terminal-read')).toContainText('Retained terminal line', { timeout: 6000 });
-  await page.mouse.move(x, y + 100); await page.mouse.wheel(0, 500);
+  await wheel(page, x, y + 100, 500);
   await expect.poll(() => page.locator('.terminal-viewport').evaluate(el => el.scrollTop)).toBeGreaterThan(50);
-  await drag(page, x, y);
+  await touch(page, 'touchStart', [{ id: 1, x, y }]);
+  await wheel(page, x, y + 100, -10000);
+  await expect.poll(() => page.locator('.terminal-viewport').evaluate(el => el.scrollTop)).toBeLessThan(1);
+  await touch(page, 'touchMove', [{ id: 1, x, y: y + 100 }]);
+  await touch(page, 'touchEnd', [{ id: 1, x, y: y + 100 }]);
   await expect(page.locator('.terminal-viewport')).toBeVisible();
   expect(await page.evaluate(() => (window as any).touchMoves.every((v: boolean) => !v))).toBe(true);
 });

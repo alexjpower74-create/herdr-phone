@@ -484,6 +484,10 @@ async function showTerminal(desired?: string) {
   history.replaceState(null, "", `#terminal=${encodeURIComponent(active.id)}`);
   const info = element("div", "terminal-info");
   info.id = "terminal-info";
+  const metadata = element("span");
+  metadata.id = "terminal-status";
+  const hint = element("span", "terminal-history-hint", "Earlier messages are in Conversation ↑");
+  info.append(hint, metadata);
   root.append(info);
   updateTerminalInfo();
   const viewport = element("main", "terminal-viewport");
@@ -501,7 +505,7 @@ async function showTerminal(desired?: string) {
     passive: true,
   });
   root.append(viewport);
-  terminalPull = new TerminalPull(viewport, info, () => connected && !conversationOpen, () => toggleConversation(true, true));
+  terminalPull = new TerminalPull(viewport, hint, () => connected && !conversationOpen, () => toggleConversation(true, true));
   conversation = new Conversation(client, active.id, connected);
   root.append(conversation.host);
   const approvals = element("div", "approvals");
@@ -630,6 +634,8 @@ function toggleConversation(open: boolean, newest = false) {
   }
   const viewToggle = root.querySelector<HTMLButtonElement>(".view-toggle");
   if (viewToggle) viewToggle.hidden = open;
+  const hint = root.querySelector<HTMLElement>(".terminal-history-hint");
+  if (hint) hint.hidden = open;
   conversation?.show(open, newest);
   updateTerminalInfo();
   if (!open) { setTerminalView(terminalView); scaleTerminal(); }
@@ -704,11 +710,9 @@ function paintReadable(capturePosition = true, scrollOnly = false) {
   readPosition = viewport.scrollTop;
 }
 function updateTerminalInfo() {
-  const info = document.querySelector("#terminal-info");
-  if (info && active) {
-    info.setAttribute("title", `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"} · ${observerLabel}`);
-    info.textContent = conversationOpen ? `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"} · ${observerLabel}` : "Earlier messages are in Conversation ↑";
-  }
+  const info = document.querySelector("#terminal-status");
+  if (info && active)
+    info.textContent = `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"} · ${observerLabel}`;
 }
 function scaleTerminal() {
   if (terminalView !== "mirror") return;
