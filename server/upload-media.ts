@@ -33,6 +33,9 @@ export async function checkMedia(bytes: Buffer, processes: UploadProcesses, sign
   if (!bytes.length) throw unsupported();
   if (bytes.length > MAX_UPLOAD) throw tooLarge();
   const kind = identify(bytes);
+  // Bound dimensions directly before a decoder applies its own platform policy.
+  if (kind === "png" && bytes.length >= 24 && bytes.readUInt32BE(16) * bytes.readUInt32BE(20) > 32000000) throw tooLarge();
+  if (kind === "gif" && bytes.length >= 10 && bytes.readUInt16LE(6) * bytes.readUInt16LE(8) > 32000000) throw tooLarge();
   if (kind === "text") return { bytes, type: "text/plain", extension: "txt", converted: false };
   const dir = await mkdtemp(join(tmpdir(), "phone-upload-"));
   const path = join(dir, "input"), output = join(dir, "normalized.jpg");

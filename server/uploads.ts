@@ -86,7 +86,7 @@ export class Uploads {
         try {
           const target = await this.target(record.machine);
           if (target.root !== record.root) continue;
-          await this.transport("remove", target, record, undefined, AbortSignal.any([this.pruneController.signal, AbortSignal.timeout(1500)]));
+          await this.transport("remove", target, record, undefined, AbortSignal.any([this.pruneController.signal, AbortSignal.timeout(Math.min(1500, Math.max(1, deadline - Date.now())))]));
           await this.store.transact(s => { s.uploads = (s.uploads || []).filter(r => r.id !== record.id); });
         } catch { /* Retain metadata/quota until its owned file can be removed safely. */ }
       }
