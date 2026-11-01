@@ -1,3 +1,4 @@
+import { subscription as validateSubscription } from "./push-subscription";
 import { spawn } from "node:child_process";
 import {
   mkdir,
@@ -24,8 +25,18 @@ export const invalid = () =>
   new Failure(400, "invalid_input", "Invalid request.");
 export const unauthorized = () =>
   new Failure(401, "unauthorized", "Pair this device to continue.");
-export type Subscription = { endpoint: string; expirationTime: number | null; keys: { p256dh: string; auth: string } };
-export type Device = { id: string; label: string; createdAt: string; hash: string; subscription?: Subscription };
+export type Subscription = {
+  endpoint: string;
+  expirationTime: number | null;
+  keys: { p256dh: string; auth: string };
+};
+export type Device = {
+  id: string;
+  label: string;
+  createdAt: string;
+  hash: string;
+  subscription?: Subscription;
+};
 type State = {
   version: 1;
   devices: Device[];
@@ -59,7 +70,14 @@ export class Store {
             typeof d.label !== "string" ||
             !/^[a-f0-9]{64}$/.test(d.hash) ||
             typeof d.createdAt !== "string" ||
-            (d.subscription !== undefined && (!d.subscription || typeof d.subscription.endpoint !== "string" || !d.subscription.keys || typeof d.subscription.keys.p256dh !== "string" || typeof d.subscription.keys.auth !== "string" || (d.subscription.expirationTime !== null && !Number.isFinite(d.subscription.expirationTime)))),
+            (d.subscription !== undefined &&
+              (!d.subscription ||
+                typeof d.subscription.endpoint !== "string" ||
+                !d.subscription.keys ||
+                typeof d.subscription.keys.p256dh !== "string" ||
+                typeof d.subscription.keys.auth !== "string" ||
+                (d.subscription.expirationTime !== null &&
+                  !Number.isFinite(d.subscription.expirationTime)))),
         ) ||
         (s.pair &&
           (!/^[a-f0-9]{64}$/.test(s.pair.hash) ||
@@ -70,6 +88,18 @@ export class Store {
             s.exchanges.some((n: any) => !Number.isFinite(n))))
       )
         throw new Error("Invalid state");
+      for (const d of s.devices)
+        if (d.subscription) validateSubscription(d.subscription, 0);
+      if (
+        new Set(s.devices.map((d: Device) => d.id)).size !== s.devices.length ||
+        new Set(s.devices.map((d: Device) => d.hash)).size !== s.devices.length
+      )
+        throw new Error("Duplicate device");
+      const endpoints = s.devices
+        .filter((d: Device) => d.subscription)
+        .map((d: Device) => d.subscription.endpoint);
+      if (new Set(endpoints).size !== endpoints.length)
+        throw new Error("Duplicate subscription");
       return s;
     } catch (e: any) {
       if (e.code === "ENOENT") return { version: 1, devices: [] };
@@ -217,24 +247,43 @@ export class Store {
     return (await this.read()).devices.map(publicDevice);
   }
   async subscription(id: string) {
-    const d = (await this.read()).devices.find(d => d.id === id);
+    const d = (await this.read()).devices.find((d) => d.id === id);
     if (!d) throw unauthorized();
     return d.subscription;
   }
   async setSubscription(id: string, subscription: Subscription) {
-    return this.transact(s => {
-      const d = s.devices.find(d => d.id === id);
+    return this.transact((s) => {
+      const d = s.devices.find((d) => d.id === id);
       if (!d) throw unauthorized();
-      if (s.devices.some(other => other.id !== id && other.subscription?.endpoint === subscription.endpoint))
-        throw new Failure(409, "subscription_conflict", "Subscription belongs to another device.");
+      if (
+        s.devices.some(
+          (other) =>
+            other.id !== id &&
+            other.subscription?.endpoint === subscription.endpoint,
+        )
+      )
+        throw new Failure(
+          409,
+          "subscription_conflict",
+          "Subscription belongs to another device.",
+        );
       d.subscription = subscription;
     });
   }
-  async removeSubscription(id: string, endpoint: string) {
-    return this.transact(s => {
-      const d = s.devices.find(d => d.id === id);
+  async removeSubscription(
+    id: string,
+    endpoint: string,
+    expected?: Subscription,
+  ) {
+    return this.transact((s) => {
+      const d = s.devices.find((d) => d.id === id);
       if (!d) throw unauthorized();
-      if (d.subscription?.endpoint === endpoint) delete d.subscription;
+      if (
+        d.subscription?.endpoint === endpoint &&
+        (!expected ||
+          JSON.stringify(d.subscription) === JSON.stringify(expected))
+      )
+        delete d.subscription;
     });
   }
   async revoke(query: string) {
