@@ -4,6 +4,7 @@ import "@fontsource/geist/400.css";
 import "@fontsource/geist/500.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "./style.css";
+import { Conversation } from "./conversation";
 import { ApiError, Client } from "./client";
 import { readableLines, type ReadLine } from "./readable";
 import { ReadWindow } from "./read-window";
@@ -23,6 +24,8 @@ let currentText = "",
   currentPrompt: Prompt | null = null,
   usedPrompt = "",
   screenGeneration = 0;
+let conversation: Conversation | undefined;
+let conversationOpen = false;
 let appEpoch = 0;
 let paintFrame = 0;
 let mirrorSource: string | undefined;
@@ -154,6 +157,9 @@ function notice(message: string) {
   el.textContent = message;
 }
 function disposeTerminal() {
+  conversation?.dispose();
+  conversation = undefined;
+  conversationOpen = false;
   screenGeneration++;
   observation.dispose();
   cancelAnimationFrame(paintFrame);
@@ -368,11 +374,14 @@ function showTerminal(desired?: string) {
   const viewToggle = button(
     "Mirror",
     () => {
+      if (conversationOpen) toggleConversation(false);
       setTerminalView(terminalView === "read" ? "mirror" : "read", true);
     },
     "view-toggle",
   );
-  tabHeader.append(tabs, viewToggle);
+  const conversationToggle = button("Conversation", () => toggleConversation(!conversationOpen), "conversation-toggle");
+  conversationToggle.setAttribute("aria-pressed", "false");
+  tabHeader.append(tabs, viewToggle, conversationToggle);
   root.append(tabHeader);
   const terminals = tab?.terminals ?? [];
   active = terminals.find((t) => t.id === desired) ?? terminals[0];
@@ -391,6 +400,7 @@ function showTerminal(desired?: string) {
   }
   if (!active) {
     viewToggle.hidden = true;
+    conversationToggle.hidden = true;
     root.append(element("p", "empty", "This tab has no running terminal."));
     return;
   }
@@ -425,6 +435,8 @@ function showTerminal(desired?: string) {
     passive: true,
   });
   root.append(viewport);
+  conversation = new Conversation(client, active.id);
+  root.append(conversation.host);
   const approvals = element("div", "approvals");
   approvals.id = "approvals";
   root.append(approvals);
@@ -516,6 +528,14 @@ function showTerminal(desired?: string) {
       );
     })
     .catch((e) => notice((e as Error).message));
+}
+function toggleConversation(open: boolean) {
+  conversationOpen = open;
+  const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
+  if (viewport) viewport.hidden = open;
+  root.querySelector(".conversation-toggle")?.setAttribute("aria-pressed", String(open));
+  conversation?.show(open);
+  if (!open) { setTerminalView(terminalView); scaleTerminal(); }
 }
 function setTerminalView(view: TerminalView, remember = false) {
   const viewport = root.querySelector<HTMLElement>(".terminal-viewport"),
@@ -1002,6 +1022,7 @@ async function start() {
     client.onConnection = (value) => {
       const changed = connected !== value;
       connected = value;
+      conversation?.connection(value);
       if (!value && active)
         notice(
           "Connection lost. Pending input was cancelled. Delivery may be unknown; drafts retained. Check the terminal before continuing.",

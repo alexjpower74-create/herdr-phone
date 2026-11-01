@@ -1,4 +1,4 @@
-import type { Frame, State, Screen } from "./types";
+import type { Frame, State, Screen, ConversationPage } from "./types";
 const TOKEN_KEY = "herdr-phone.device";
 export class ApiError extends Error {
   constructor(
@@ -28,9 +28,11 @@ export class Client {
     path: string,
     body?: unknown,
     method = body === undefined ? "GET" : "POST",
+    signal?: AbortSignal,
   ): Promise<T> {
     const response = await fetch(`/api${path}`, {
       method,
+      signal,
       cache: "no-store",
       headers: {
         ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
@@ -62,6 +64,10 @@ export class Client {
   }
   screen(id: string) {
     return this.request<Screen>(`/terminals/${encodeURIComponent(id)}/screen`);
+  }
+  conversation(id: string, before?: string, signal?: AbortSignal) {
+    const query = before ? `?before=${encodeURIComponent(before)}` : "";
+    return this.request<ConversationPage>(`/terminals/${encodeURIComponent(id)}/conversation${query}`, undefined, "GET", signal);
   }
   action(id: string, kind: "send" | "keys" | "prompt", body: unknown) {
     const epoch = this.epochs.get(id) ?? 0;

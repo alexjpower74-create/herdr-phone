@@ -555,3 +555,33 @@ dialog::backdrop {
 .settings-action[hidden] {
   display: none;
 }
+
+.conversation-toggle {
+  flex: none;
+  min-height: 44px;
+  padding: 0 10px;
+  color: #a5b7d0;
+  font-size: 12px;
+}
+.conversation-toggle[aria-pressed="true"] { background: #303b4d; color: #fff; }
+.conversation {
+  flex: 1;
+  min-height: 80px;
+  overflow: auto;
+  overflow-x: hidden;
+  overflow-anchor: none;
+  padding: 0 12px 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  touch-action: pan-y pinch-zoom;
+}
+.conversation[hidden], .terminal-viewport[hidden] { display: none; }
+.conversation button { min-height: 44px; padding: 8px 12px; }
+.conversation-status { color: var(--muted); font-size: 13px; margin: 8px 0; }
+.conversation article { margin: 12px 0 22px; }
+.conversation-entry { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; margin: 10px 0; }
+.conversation-user { background: #293244; border-left: 3px solid #a5b7d0; border-radius: 5px; padding: 10px 12px; }
+.conversation-assistant { color: #d8d8df; }
+.conversation-tool { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: 13px/1.8 "JetBrains Mono", monospace; }
+.conversation-latest { position: sticky; bottom: 0; display: block; margin-left: auto; background: #303b4d; border-radius: 8px; }
+.conversation-latest[hidden] { display: none; }

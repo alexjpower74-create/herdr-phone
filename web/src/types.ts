@@ -61,3 +61,12 @@ export type Frame =
     }
   | { type: "connection"; connected: boolean }
   | { type: "error"; code: string; message: string; terminalId?: string; watchId?: string };
+
+export type ConversationPage = {
+  available: boolean;
+  reason?: "not_configured" | "not_found" | "ambiguous" | "offline";
+  session: string | null;
+  revision: string;
+  turns: { id: string; entries: { id: string; role: "user" | "assistant" | "tool"; text: string }[] }[];
+  nextCursor: string | null;
+};
