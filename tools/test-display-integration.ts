@@ -200,8 +200,8 @@ finally:
 `, { mode: 0o700 });
   process.env.HERDR_PHONE_HC = join(scratch, "hc-audit");
   const store = new Store(join(scratch, "device"));
-  const code = await store.pair();
-  const paired = await store.exchange(code.code, "Display check");
+  const code = await store.pairing();
+  const paired = await store.exchange(code, "Display check");
   app = start({ port: 0, origin, store });
   vite = await createServer({ root: resolve("web"), configFile: false, server: { host: "127.0.0.1", port, strictPort: true,
     proxy: { "/api": { target: `http://127.0.0.1:${app.server.port}`, ws: true } } }, logLevel: "error" });
