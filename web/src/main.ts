@@ -5,7 +5,7 @@ import "@fontsource/geist/500.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "./style.css";
 import { ApiError, Client } from "./client";
-import { readableLines } from "./readable";
+import { patchReadable, readableLines } from "./readable";
 import { notificationSettings } from "./notifications";
 import type { State, Space, Tab, TerminalInfo, Frame, Prompt } from "./types";
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -23,6 +23,8 @@ let currentText = "",
   usedPrompt = "",
   screenGeneration = 0;
 let appEpoch = 0;
+let paintFrame = 0;
+let mirrorSource: string | undefined;
 type TerminalView = "read" | "mirror";
 const VIEW_KEY = "herdr-phone.terminal-view";
 function preferredTerminalView(): TerminalView {
@@ -80,6 +82,9 @@ function notice(message: string) {
 }
 function disposeTerminal() {
   screenGeneration++;
+  cancelAnimationFrame(paintFrame);
+  paintFrame = 0;
+  mirrorSource = undefined;
   resize?.disconnect();
   emulator?.dispose();
   emulator = undefined;
@@ -492,20 +497,12 @@ function paintReadable(capturePosition = true) {
   )
     return;
   readSource = currentText;
-  const content = document.createDocumentFragment();
-  for (const line of readableLines(currentText)) {
-    content.append(
-      line.kind === "rule"
-        ? element("hr", "read-rule")
-        : element("div", "read-line", line.text),
-    );
-  }
   // Native scrolling can advance before its scroll event is delivered. Read
   // the live position immediately before replacing content, not from its last
   // callback or before building the next frame.
   if (capturePosition) captureReadPosition(viewport);
   const position = readPosition;
-  read.replaceChildren(content);
+  patchReadable(read, readableLines(currentText));
   viewport.scrollTop = followingNewest ? viewport.scrollHeight : position;
   readPosition = viewport.scrollTop;
 }
@@ -544,6 +541,7 @@ function dimensions(cols: number, rows: number) {
     rows > 500
   )
     return;
+  if (emulator.cols !== cols || emulator.rows !== rows) mirrorSource = undefined;
   active.cols = cols;
   active.rows = rows;
   if (emulator.cols !== cols || emulator.rows !== rows)
@@ -560,22 +558,27 @@ function paint(
   dimensions(cols, rows);
   if (!emulator) return;
   currentText = text;
-  paintReadable();
-  const target = emulator,
-    id = active?.id,
-    generation = screenGeneration;
-  target.reset();
-  const plain = text.replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/g, "");
-  target.write(plain.replace(/\n/g, "\r\n"), () => {
-    if (
-      emulator === target &&
-      active?.id === id &&
-      generation === screenGeneration
-    )
-      scaleTerminal();
-  });
   renderChoices();
+  if (paintFrame) return;
+  paintFrame = requestAnimationFrame(() => {
+    paintFrame = 0;
+    paintReadable();
+    if (!emulator || mirrorSource === currentText) return;
+    const target = emulator;
+    const previous = mirrorSource?.split("\n") ?? [];
+    const plain = currentText.replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/g, "");
+    const lines = plain.split("\n");
+    let patch = "";
+    for (let i = 0; i < Math.min(target.rows, Math.max(lines.length, previous.length)); i++)
+      if (previous[i] !== lines[i])
+        patch += `\x1b[${i + 1};1H\x1b[2K${lines[i] ?? ""}`;
+    mirrorSource = plain;
+    if (patch) target.write(patch, () => {
+      if (emulator === target) scaleTerminal();
+    });
+  });
 }
+
 function renderChoices() {
   const area = document.querySelector<HTMLElement>("#approvals");
   if (!area) return;
