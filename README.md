@@ -6,24 +6,150 @@ It's a web app you add to your iPhone's home screen. There's no App Store and no
 
 **Status:** in development. See [PLAN.md](PLAN.md) for the spec and the build phases.
 
-## Bridge setup
+## Quick start
 
-The bridge currently runs on Linux with Bun 1.4.4 or newer, herdr-core (`hc`)
-and `flock` from util-linux. Remote machines already connected to the local
-core appear automatically; they do not need a second bridge.
+You need a Linux computer with a systemd user session, Git, Bun **1.4.4 or
+newer**, Node.js **22.12 or newer** for the web build/tools, and `flock` from
+util-linux. Herdr and herdr-core must already be running under the same user,
+with `hc` available. Machines already connected to that core appear automatically;
+only one bridge is needed.
 
-Install the locked bridge dependencies with `bun install --frozen-lockfile`,
-then run `bun server/index.ts` from the repository. It listens only on
-`127.0.0.1:8790`. Set `HERDR_PHONE_ORIGIN` to the exact browser origin before
-exposing it through a private HTTPS proxy. For Tailscale, port 8443 permits
-running alongside an existing service on the default HTTPS port.
+Install Tailscale on the computer and phone, connect both to the same tailnet,
+and enable MagicDNS and [HTTPS certificates](https://tailscale.com/docs/how-to/set-up-https-certificates).
+Optional features need Python 3 for saved conversations and attachment storage,
+ImageMagick with HEIF support for images, and Poppler's `pdfinfo` for PDFs.
+Remote conversations and uploads also need Python 3 on the remote machine and
+noninteractive SSH access from the bridge user.
 
-Pair a phone with `bun bin/herdr-phone pair`. The eight-character code expires
-in ten minutes, works once, and is invalidated after five wrong attempts.
+1. **Clone, install both sets of dependencies, and build the web app.**
+
+   ```sh
+   mkdir -p "$HOME/Projects"
+   git clone https://github.com/alexjpower74-create/herdr-phone.git "$HOME/Projects/herdr-phone"
+   cd "$HOME/Projects/herdr-phone"
+   bun install --frozen-lockfile
+   (cd web && bun install --frozen-lockfile)
+   bun run build
+   ```
+
+2. **Set the private browser origin.** Create the configuration directory:
+
+   ```sh
+   install -d -m 700 "$HOME/.config/herdr-phone"
+   ```
+
+   Save this as `~/.config/herdr-phone/environment`, replacing the hostname
+   placeholder with this computer's full Tailscale DNS name. Include `:8443`
+   and omit any trailing slash or path.
+
+   ```ini
+   HERDR_PHONE_ORIGIN=https://<full-tailnet-hostname>:8443
+   HERDR_PHONE_LOCAL_NAME="This computer"
+   ```
+
+   ```sh
+   chmod 600 "$HOME/.config/herdr-phone/environment"
+   command -v bun
+   command -v hc
+   ```
+
+3. **Create the user service.** Create `~/.config/systemd/user/` if needed and
+   save the following as `~/.config/systemd/user/herdr-phone.service`.
+   `%h` means your home directory. This example assumes Bun is in `~/.bun/bin`
+   and `hc` is in `~/.local/bin` or a system bin directory; adjust `ExecStart`
+   and `PATH` to match the paths printed above. Adjust `WorkingDirectory` and
+   the entry-point path if you cloned elsewhere.
+
+   ```ini
+   [Unit]
+   Description=Herdr Phone
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   Type=simple
+   WorkingDirectory=%h/Projects/herdr-phone
+   EnvironmentFile=%h/.config/herdr-phone/environment
+   Environment="PATH=%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+   ExecStart=%h/.bun/bin/bun %h/Projects/herdr-phone/bin/herdr-phone serve
+   Restart=on-failure
+   RestartSec=3
+   UMask=0077
+
+   [Install]
+   WantedBy=default.target
+   ```
+
+4. **Start the bridge and publish it privately over HTTPS.**
+
+   ```sh
+   systemctl --user daemon-reload
+   systemctl --user enable --now herdr-phone.service
+   tailscale serve --bg --https=8443 http://127.0.0.1:8790
+   tailscale serve status
+   ```
+
+   Use `sudo` for the Tailscale command if your installation requires it.
+   [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
+   handles HTTPS in front of the loopback bridge. The URL it prints must match
+   `HERDR_PHONE_ORIGIN` exactly. Port 8443 leaves an existing HTTPS service on
+   port 443 alone. The computer and its user service must remain running.
+   For startup errors, check `journalctl --user -u herdr-phone.service -n 50`;
+   the loopback health endpoint is `http://127.0.0.1:8790/api/health`.
+
+5. **Add the phone app and pair it.** With Tailscale connected on the iPhone,
+   open the HTTPS URL in Safari, choose **Share → Add to Home Screen**, then
+   launch Herdr from its new icon. From the repository on the computer, run:
+
+   ```sh
+   bun bin/herdr-phone pair
+   ```
+
+   This is `herdr-phone pair` when the repository's `bin/` directory is on
+   your PATH. Enter the eight-character code in the phone app. It expires
+   after ten minutes, works once, and is invalidated after five wrong attempts.
+   Home should now show your spaces; tap one to open its first tab.
+
+6. **Optionally enable saved conversations.** Save a private
+   `~/.config/herdr-phone/transcripts.json` using the example below. Replace
+   each placeholder directory with the JSONL logs and, for message-envelope
+   records, the PID session index produced by your terminal program. Keep only
+   the sources you actually use. The remote key must match its herdr-core
+   machine alias; `ssh` is an existing alias in your SSH configuration.
+
+   ```json
+   {
+     "machines": {
+       "local": {
+         "sources": [
+           { "format": "messages", "root": "~/message-logs", "sessions": "~/session-index" },
+           { "format": "responses", "root": "~/response-logs" }
+         ]
+       },
+       "remote": {
+         "ssh": "configured-ssh-alias",
+         "sources": [{ "format": "responses", "root": "~/response-logs" }]
+       }
+     }
+   }
+   ```
+
+   ```sh
+   chmod 600 "$HOME/.config/herdr-phone/transcripts.json"
+   ```
+
+   Remove the `remote` entry for a local-only setup. See the
+   [source formats and process matching](docs/API.md#conversation-history) for
+   details. Until a matching source is configured, Conversation shows an
+   unavailable message; **Terminal view** and the input controls still work.
+
+## Bridge configuration
+
 `bun bin/herdr-phone devices list` lists paired devices;
 `bun bin/herdr-phone devices revoke <label-or-id>` removes access.
 Restarting the bridge preserves device credentials. Device state is stored
 privately under `~/.config/herdr-phone/`; only token hashes are retained.
+The bridge listens only on `127.0.0.1:8790` by default and serves `web/dist`.
 
 | Setting | Default | Purpose |
 |---|---|---|
@@ -43,27 +169,57 @@ paired device token. See [docs/API.md](docs/API.md) for the complete contract.
 The bridge reads existing terminals without changing their size or scrolling
 their history. Interactive verification must use disposable terminals.
 
-## Development checks
+## Contributing
 
-Run `bun test ./server` for bridge checks and `tools/check-no-personal-data`
-before publishing. The scanner's `--self-test` mode proves it rejects planted
-private values, including values placed inside the scanner itself. Tests use
-temporary private state and fake core processes; they do not type into existing
-terminals. The browser source and its own checks live under `web/`.
+Pull requests against **main** are welcome. Fork the repository, make a focused
+change on a branch, and describe the behavior and checks in your PR. Keep private
+configuration, tokens, transcript files, machine names and screenshots of real
+sessions out of commits.
 
-The opt-in `tools/test-push-integration.ts` check requires
-`HERDR_PHONE_INTEGRATION=1`. It creates one disposable terminal in a separate
-test space, drives real status events and verifies encrypted delivery against
-a local fake push endpoint. It checks silent reconnection, exact blocked/done
-counts, signature validity and cleanup without changing desktop terminal sizes
-or focus. It never contacts a public push provider.
+Install both locked dependency sets as in Quick start. For local development,
+port 8790 must be free: use the foreground bridge instead of the installed user
+service. From the repository, run this in one shell:
+
+```sh
+HERDR_PHONE_ORIGIN=http://127.0.0.1:5176 bun bin/herdr-phone serve
+```
+
+In a second shell, run `bun run --cwd web dev` and open
+`http://127.0.0.1:5176`. Vite proxies `/api` and WebSockets to the bridge on
+8790. Pair the development browser with a fresh code. This loopback setup is
+for development; the phone uses the HTTPS setup above.
+
+Install the test browsers once, then run the relevant checks from the repository:
+
+```sh
+(cd web && bunx playwright install --with-deps chromium webkit)
+bun test ./server
+bun run --cwd web test:unit
+bun run --cwd web test
+bun run build
+tools/check-no-personal-data
+```
+
+The browser suite runs Chromium and WebKit with mocked APIs on its own port
+5177. Node.js is required by its server command; Python 3 runs the privacy
+scanner. The server suite also exercises the optional image/PDF dependencies
+listed above. `tools/check-no-personal-data --self-test` verifies the scanner
+against planted private values.
+
+Automated checks must not type into, resize or scroll existing terminals.
+Opt-in `tools/test-*-integration.ts` scripts require
+`HERDR_PHONE_INTEGRATION=1` and create disposable terminals in separate test
+spaces. Review each script's prerequisites before running it and preserve its
+cleanup and ownership checks.
 
 ## What it does (v1)
+
 - **Home** is Herdr's Spaces sidebar, with spaces grouped by machine. A + next to each machine opens a new space there.
 - **Tap a space** to open its first tab. The other tabs run across the top.
 - **Each tab opens in Conversation.** Saved messages stay live, with your messages highlighted and older turns available by scrolling up. New replies follow at the bottom until you scroll away. **Terminal view** switches to the live terminal; **Conversation** brings you back.
 - **Terminal view** starts in Mirror, keeping ANSI colours, fitting the phone width and supporting browser pinch zoom. Read wraps the text and follows new output until you scroll up. Both terminal views begin with about 500 retained history rows and load earlier rows at the top. The device remembers your Mirror/Read choice inside Terminal view; reopening a tab always starts in Conversation.
 - **Compose and controls** work in either view. Compose locally, then tap Send or Enter to submit the message. The key bar provides Shift+Tab, Esc, the arrows, Enter and ^C without changing the desktop terminal size.
+- **Attachments** use the paperclip for photos, camera images, PDFs and text files. Preview or remove selections locally; Send transfers them to the terminal's machine with your message.
 - **Approval and menu buttons** preserve the choices and permission scope shown by recognized dialogs. Slash commands such as `/model` and `/effort` use the compose box; unknown menus remain usable with the key bar.
 - **Pairing** uses a one-time code. Optional notifications tell you when a terminal needs you or finishes; tapping one opens its tab.
 
