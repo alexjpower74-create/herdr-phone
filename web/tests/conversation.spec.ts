@@ -52,7 +52,6 @@ async function hit(control: Locator) {
   expect(area.height).toBeGreaterThanOrEqual(44);
   expect(area.hits).toEqual([true, true, true]);
 }
-const saved = (page: Page) => page.getByRole("region", { name: "Saved conversation" });
 async function wheel(page: Page, delta: number) {
   const box = await page.locator(".conversation").boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
@@ -166,11 +165,39 @@ test("terminal switch cancels stale latest; no-overlap refresh resets page and c
   await old.fulfill({ json: oldPage }).catch(() => {});
   await expect(page.locator('[data-turn="turn-172"]')).toHaveCount(0);
   model.data = turns("responses", 320);
+  model.delayOlder = true;
   await expect(page.locator('[data-turn="turn-319"]')).toBeVisible({ timeout: 7000 });
   await expect(page.locator(".conversation article")).toHaveCount(50);
   for (let i = 0; i < 20 && !model.requests.some(url => url.includes("before=270")); i++) await wheel(page, -6000);
   expect(model.requests.some(url => url.includes("before=270"))).toBe(true);
-  // Prepending deliberately keeps the first visible old turn anchored below the new page.
-  for (let i = 0; i < 8; i++) await wheel(page, -6000);
   await hit(page.getByRole("button", { name: "Load older messages" }));
+});
+
+test("older prepend preserves visible anchor and Read preference survives Conversation", async ({ page }) => {
+  const { open, model, result } = await setup(page);
+  await page.getByRole("button", { name: "Show readable text" }).tap();
+  await open();
+  await expect(page.locator('[data-turn="turn-172"]')).toBeVisible();
+  model.delayOlder = true;
+  for (let i = 0; i < 20 && !model.pending; i++) await wheel(page, -6000);
+  expect(model.pending).toBeTruthy();
+  const anchor = page.locator('[data-turn="turn-123"]');
+  const before = (await anchor.boundingBox())!.y;
+  await hit(page.getByRole("button", { name: "Load older messages" }));
+  await model.pending!.fulfill({ json: result("123") });
+  await expect(page.locator('[data-turn="turn-73"]')).toBeAttached();
+  expect(Math.abs((await anchor.boundingBox())!.y - before)).toBeLessThan(3);
+  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  await expect(page.locator(".terminal-read")).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("herdr-phone.terminal-view"))).toBe("read");
+});
+
+test("revoked authentication cancels a delayed page and returns pairing", async ({ page }) => {
+  const { open, model } = await setup(page);
+  model.delayLatest = true;
+  await open();
+  await expect.poll(() => !!model.pending).toBe(true);
+  await model.pending!.fulfill({ status: 401, json: { error: { code: "unauthorized", message: "Pair this phone to continue." } } });
+  await expect(page.getByRole("heading", { name: "Your spaces, with you." })).toBeVisible();
+  await expect(page.locator(".conversation")).toHaveCount(0);
 });
