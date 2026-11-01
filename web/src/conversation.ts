@@ -18,6 +18,9 @@ export class Conversation {
   private visible = false;
   private online = true;
   private initialized = false;
+  private following = true;
+  private scrollPosition = 0;
+  private resize: ResizeObserver;
   private timer: ReturnType<typeof setInterval>;
   constructor(private client: Client, private id: string, online: boolean) {
     this.online = online;
@@ -34,12 +37,20 @@ export class Conversation {
     this.latest.textContent = "Latest messages";
     this.latest.className = "conversation-latest";
     this.latest.hidden = true;
-    this.latest.onclick = () => { this.host.scrollTop = this.host.scrollHeight; this.latest.hidden = true; };
+    this.latest.onclick = () => { this.following = true; this.restorePosition(); };
     this.host.append(this.status, this.retry, this.older, this.list, this.latest);
     this.host.addEventListener("scroll", () => {
-      this.latest.hidden = this.atBottom();
+      this.capturePosition();
+      this.latest.hidden = this.following;
       if (this.host.scrollTop < 32 && this.cursor) void this.load(true);
     }, { passive: true });
+    this.resize = new ResizeObserver(() => {
+      if (!this.visible || !this.initialized) return;
+      this.capturePosition();
+      this.restorePosition();
+    });
+    this.resize.observe(this.host);
+    this.resize.observe(this.list);
     document.addEventListener("visibilitychange", this.visibility);
     this.timer = setInterval(() => { if (this.visible && !document.hidden && this.online) void this.load(); }, 2500);
   }
@@ -63,6 +74,7 @@ export class Conversation {
   dispose() {
     this.cancel();
     clearInterval(this.timer);
+    this.resize.disconnect();
     document.removeEventListener("visibilitychange", this.visibility);
   }
   private cancel() {
@@ -73,6 +85,18 @@ export class Conversation {
     this.older.disabled = false;
   }
   private atBottom() { return this.host.scrollHeight - this.host.scrollTop - this.host.clientHeight < 40; }
+  private capturePosition() {
+    // Read native scrolling before its asynchronous event too. A shorter panel
+    // or a loaded font can increase the bottom gap without the person moving.
+    const top = this.host.scrollTop;
+    if (Math.abs(top - this.scrollPosition) > 0.5) this.following = this.atBottom();
+    this.scrollPosition = top;
+  }
+  private restorePosition() {
+    this.latest.hidden = this.following;
+    if (this.following) this.host.scrollTop = this.host.scrollHeight;
+    this.scrollPosition = this.host.scrollTop;
+  }
   private failure(message: string) {
     this.status.textContent = message;
     this.retry.hidden = false;
@@ -106,7 +130,8 @@ export class Conversation {
         this.cancel();
         this.nodes.clear(); this.list.replaceChildren(); this.session = page.session;
       }
-      const follow = reset || (!older && this.atBottom());
+      this.capturePosition();
+      const follow = reset || (!older && this.following);
       const anchor = [...this.list.children].find(el => el.getBoundingClientRect().bottom > this.host.getBoundingClientRect().top);
       const offset = anchor?.getBoundingClientRect().top;
       const fragment = document.createDocumentFragment();
@@ -138,9 +163,9 @@ export class Conversation {
       if (!page.turns.length && !this.nodes.size) this.status.textContent = "No saved messages yet.";
       this.retry.hidden = true;
       this.older.hidden = !this.cursor;
-      if (follow) this.host.scrollTop = this.host.scrollHeight;
-      else if (anchor?.isConnected && offset !== undefined) this.host.scrollTop += anchor.getBoundingClientRect().top - offset;
-      this.latest.hidden = this.atBottom();
+      this.following = follow;
+      if (!follow && anchor?.isConnected && offset !== undefined) this.host.scrollTop += anchor.getBoundingClientRect().top - offset;
+      this.restorePosition();
     } catch (error) {
       if (epoch !== this.epoch || controller.signal.aborted) return;
       if (error instanceof ApiError && error.code === "conversation_changed") {
