@@ -128,3 +128,18 @@ test("failed font requests keep fallback usable without an unhandled rejection",
   expect(errors).toEqual([]);
   expect(mock.requests.every(request => request.startsWith("GET "))).toBe(true);
 });
+
+test("font arriving during Conversation is measured again when Mirror returns", async ({ page }) => {
+  const mock = await setup(page, true);
+  await expect.poll(mock.held).toBeGreaterThan(0);
+  await expect(page.locator(".terminal-canvas:not(.observer-staging) .xterm-rows")).toContainText("Readable terminal", { timeout: 4000 });
+  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  mock.release();
+  await page.evaluate(() => document.fonts.ready);
+  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+  await expect(page.locator(".terminal-canvas:not(.observer-staging) .xterm-rows")).toContainText("Readable terminal");
+  const after = await metrics(page);
+  expect(Math.abs(after.cell - after.glyph)).toBeLessThan(0.04);
+  expect(after.width).toBeGreaterThan(300);
+  expect(after.width).toBeLessThanOrEqual(366);
+});
