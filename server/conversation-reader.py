@@ -1,6 +1,7 @@
 """Read-only, bounded transcript resolver. Executed locally or over SSH stdin."""
 import os, sys, json, hashlib, subprocess, time, stat, collections, re, base64, signal
-MAX_FILE = 128 * 1024 * 1024
+MAX_WINDOW = 8 * 1024 * 1024
+MAX_OUTPUT = 2 * 1024 * 1024
 MAX_LINE = 4 * 1024 * 1024
 MAX_SCAN = 30000
 class Problem(Exception):
@@ -53,7 +54,7 @@ def files(root, session):
     for base,dirs,names in os.walk(root,followlinks=False):
         dirs[:]=[d for d in dirs if not os.path.islink(os.path.join(base,d))]
         count+=len(dirs)+len(names)
-        if count>MAX_SCAN: raise Problem('limit')
+        if count>MAX_SCAN: raise Problem('discovery')
         for name in names:
             if name==session+'.jsonl': yield os.path.realpath(os.path.join(base,name))
 
@@ -72,7 +73,7 @@ def header(path,fmt):
     with open(path,'rb') as f:
         for _ in range(100):
             line=f.readline(MAX_LINE+1)
-            if len(line)>MAX_LINE: raise Problem('limit')
+            if len(line)>MAX_LINE: raise Problem('discovery')
             if not line.endswith(b'\n'): break
             try: r=json.loads(line)
             except (ValueError,UnicodeError): raise Problem('invalid')
@@ -145,64 +146,106 @@ def entries(r,fmt,offset):
 def tool(name):
     return re.sub(r'[^\w .:/-]','',str(name or 'Tool').split('\n')[0])[:120] or 'Tool'
 
+def guard(f, size, boundary):
+    # Small fixed guards detect edits at both snapshot ends and the paging seam.
+    spans=[]
+    for point in (0, size, boundary):
+        start=max(0,point-256); end=min(size,point+256)
+        f.seek(start); spans.append([start,end,hashlib.sha256(f.read(end-start)).hexdigest()])
+    return spans
+
 def read(req):
     path,fmt,sid,proc,rootproc=resolve(req)
     with open(path,'rb') as f:
         st=os.fstat(f.fileno())
         if not stat.S_ISREG(st.st_mode): raise Problem('invalid')
-        if st.st_size>MAX_FILE: raise Problem('limit')
         fingerprint=list(map(str,[st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns]))
         binding=hashlib.sha256(json.dumps([identity(rootproc),identity(proc),path,fmt,sid,st.st_dev,st.st_ino]).encode()).hexdigest()
         expected=req.get('expected'); before=req.get('before')
-        if expected and expected['binding']!=binding: raise Problem('changed')
-        if req.get('cached')==fingerprint and not before:
+        if expected:
+            if expected['binding']!=binding or st.st_size<expected['size']: raise Problem('changed')
+            if st.st_size==expected['size'] and fingerprint!=expected['fingerprint']: raise Problem('changed')
+            for start,end,digest in expected['guards']:
+                f.seek(start)
+                if hashlib.sha256(f.read(end-start)).hexdigest()!=digest: raise Problem('changed')
+        if req.get('cached')==fingerprint and before is None:
             result={'unchanged':True,'binding':binding,'fingerprint':fingerprint}
         else:
-            digest=hashlib.sha256(); prefix=hashlib.sha256(); seen=set(); turns=collections.deque(maxlen=51); current=None; offset=0; prefix_size=expected['size'] if expected else 0; page_bytes=0
-            while offset<st.st_size:
-                line=f.readline(min(MAX_LINE+1,st.st_size-offset))
-                if len(line)>MAX_LINE: raise Problem('limit')
-                if expected and offset<prefix_size: prefix.update(line[:prefix_size-offset])
-                digest.update(line)
-                if not line.endswith(b'\n'): offset+=len(line); break
-                try: record=json.loads(line)
-                except (ValueError,UnicodeError): raise Problem('invalid')
-                selected=entries(record,fmt,offset)
-                # A multipart user message starts one turn, not one turn per text block.
+            size=expected['size'] if before is not None else st.st_size
+            end=before if before is not None else size
+            start=max(0,end-MAX_WINDOW)
+            f.seek(start); data=f.read(end-start)
+            warnings=set(); records=[]
+            # A scan seam can bisect a record. Consume that prefix on the older
+            # page, where its complete record can be read, rather than dropping it.
+            head=0
+            if start:
+                f.seek(start-1)
+                if f.read(1)!=b'\n':
+                    newline=data.find(b'\n')
+                    head=len(data) if newline<0 else newline+1
+                    if head>MAX_LINE: warnings.add('long_output_trimmed')
+            complete=data.rfind(b'\n')+1
+            if before is not None and complete<len(data):
+                # The cursor bisects a record larger than the entire scan budget.
+                warnings.add('long_output_trimmed')
+            pos=head
+            while pos<complete:
+                stop=data.find(b'\n',pos)+1
+                if stop-pos>MAX_LINE: warnings.add('long_output_trimmed')
+                else:
+                    try: record=json.loads(data[pos:stop])
+                    except (ValueError,UnicodeError): raise Problem('invalid')
+                    records.append((start+pos,entries(record,fmt,start+pos)))
+                pos=stop
+            # Reverse selection includes the newest snapshot for a repeated ID.
+            groups=[]; current=[]; seen=set(); used=0; boundary=end; closed=0
+            for offset,selected in reversed(records):
                 fresh=[e for e in selected if e[2] not in seen]
-                for role,text,key in selected:
-                    if key in seen:
-                        for retained in turns:
-                            for entry in retained['entries']:
-                                if entry['id']==key and entry['role']==role: entry['text']=text
-                if fresh and fresh[0][0]=='user':
-                    current={'id':str(offset),'entries':[],'offset':offset}
-                    if before is None or offset<before: turns.append(current)
+                cost=sum(min(len(e[1].encode()),MAX_OUTPUT-64) for e in fresh)
+                if used and used+cost>MAX_OUTPUT: break
+                if closed>=50: break
+                kept=[]
                 for role,text,key in fresh:
-                    seen.add(key)
-                    if len(seen)>500000: raise Problem('limit')
-                    if current is not None and (before is None or current['offset']<before):
-                        current['entries'].append({'id':key,'role':role,'text':text})
-                        if sum(len(e['text']) for e in current['entries'])>2*1024*1024 or len(current['entries'])>10000: raise Problem('limit')
-                offset+=len(line)
-            if expected and (st.st_size<prefix_size or prefix.hexdigest()!=expected['digest']): raise Problem('changed')
-            more=len(turns)>50
-            if more: turns.popleft()
-            selected=list(turns)
-            if sum(len(e['text'].encode()) for t in selected for e in t['entries'])>2*1024*1024: raise Problem('limit')
-            result={'binding':binding,'fingerprint':fingerprint,'size':st.st_size,'digest':digest.hexdigest(),'turns':selected,'next':selected[0]['offset'] if more and selected else None}
+                    raw=text.encode(); remaining=MAX_OUTPUT-used
+                    if len(raw)>remaining or len(raw)>MAX_OUTPUT-64:
+                        limit=max(0,min(remaining-32,MAX_OUTPUT-64))
+                        text=raw[:limit].decode('utf-8','ignore')+'\n[long output trimmed]'
+                        warnings.add('long_output_trimmed')
+                    if len(text.encode())>remaining: break
+                    used+=len(text.encode()); seen.add(key)
+                    kept.append({'id':key,'role':role,'text':text})
+                if kept: current=kept+current
+                boundary=offset
+                if fresh and fresh[0][0]=='user' and current:
+                    groups.append({'id':str(offset),'entries':current})
+                    current=[]; closed+=1
+            else:
+                boundary=start+head if head<len(data) else start
+                if start and head:
+                    # Re-read a partial head on the next page when it fits. If no
+                    # newline exists in this window, advance past the giant record.
+                    boundary=start+head if head<len(data) else start
+            if current:
+                groups.append({'id':'fragment:'+str(end),'entries':current,'continuesPrevious':boundary>0})
+            groups.reverse()
+            if req.get('join') and groups: groups[-1]['id']=req['join']
+            next_join=(groups[0]['id'] if groups[0].get('continuesPrevious') else None) if groups else req.get('join')
+            if boundary>0 and (start>0 or used>=MAX_OUTPUT or closed>=50): warnings.add('scan_limited')
+            guards=guard(f,size,boundary)
+            result={'binding':binding,'fingerprint':fingerprint,'size':size,'guards':guards,
+                    'digest':hashlib.sha256(json.dumps([fingerprint,guards]).encode()).hexdigest(),
+                    'turns':groups,'next':boundary if boundary>0 else None,'join':next_join,'warnings':sorted(warnings)}
         after=os.stat(path)
         if (after.st_dev,after.st_ino)!=(st.st_dev,st.st_ino) or after.st_size<st.st_size: raise Problem('changed')
-        # A concurrent append is safe; any other concurrent mutation requires retry.
         if after.st_size==st.st_size and (after.st_mtime_ns,after.st_ctime_ns)!=(st.st_mtime_ns,st.st_ctime_ns): raise Problem('changed')
     if identity(process(proc['pid']))!=identity(proc) or identity(process(rootproc['pid']))!=identity(rootproc): raise Problem('changed')
-    # Descriptor closure, index replacement and new competing descendants also invalidate a read.
     again=resolve(req)
     if (again[0],again[1],again[2],identity(again[3]),identity(again[4]))!=(path,fmt,sid,identity(proc),identity(rootproc)): raise Problem('changed')
     return result
 
 try:
-    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(Problem("unavailable")))
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(Problem("timeout")))
     signal.alarm(10)
     request=json.loads(base64.b64decode(sys.argv[1]))
     print(json.dumps(read(request),separators=(',',':')))
