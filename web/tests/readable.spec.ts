@@ -286,10 +286,50 @@ test("mirror toggle preserves the desktop grid and permits browser pinch zoom", 
     /user-scalable\s*=\s*no|maximum-scale\s*=\s*1(?:,|$)/,
   );
   expect(meta).toContain("maximum-scale=10");
-  if (process.env.WEB_CAPTURE_DIR)
-    await page.screenshot({
-      path: `${process.env.WEB_CAPTURE_DIR}/terminal-mirror-${test.info().project.name}.png`,
+  const control = await page
+    .getByRole("button", { name: "enter", exact: true })
+    .evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const x = Math.round(r.x + 8),
+        y = Math.round(r.y + 8);
+      const hit = document.elementFromPoint(x, y);
+      return {
+        x,
+        y,
+        hit: hit === el || (hit !== null && el.contains(hit)),
+        color: getComputedStyle(el)
+          .backgroundColor.match(/\d+/g)!
+          .slice(0, 3)
+          .map(Number),
+      };
     });
+  expect(control.hit).toBe(true);
+  const mirrorCapture = await page.screenshot(
+    process.env.WEB_CAPTURE_DIR
+      ? {
+          path: `${process.env.WEB_CAPTURE_DIR}/terminal-mirror-${test.info().project.name}.png`,
+        }
+      : {},
+  );
+  // Hit testing alone misses a composited terminal layer painting over the dock.
+  const painted = await page.evaluate(
+    async ({ png, x, y }) => {
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = reject;
+        image.src = `data:image/png;base64,${png}`;
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      return [...context.getImageData(x, y, 1, 1).data].slice(0, 3);
+    },
+    { png: mirrorCapture.toString("base64"), x: control.x, y: control.y },
+  );
+  expect(painted).toEqual(control.color);
   await page
     .getByRole("button", { name: "Show readable text", exact: true })
     .tap();
