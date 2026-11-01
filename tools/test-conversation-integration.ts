@@ -78,7 +78,7 @@ def emit(value): f.write(json.dumps(value,ensure_ascii=False)+'\n')
 if kind=='responses':emit({'type':'session_meta','payload':{'id':session,'cwd':str(root)},'timestamp':clock})
 for n in range(1,126):
  user='Message %03d: review this saved conversation.'%n
- reply='Reply %03d: the saved text remains readable, including café and 🐾.'%n
+ reply='Reply %03d: the saved text remains readable, including caf\u00e9 and \U0001f43e.'%n
  if kind=='messages':
   emit({'type':'user','uuid':'u%03d'%n,'sessionId':session,'cwd':str(root),'message':{'role':'user','content':user}})
   emit({'type':'assistant','uuid':'a%03d'%n,'sessionId':session,'message':{'role':'assistant','content':[{'type':'text','text':reply},{'type':'thinking','thinking':'HIDDEN_REASONING'},{'type':'tool_use','id':'tool%03d'%n,'name':'Inspect file','input':{'secret':'HIDDEN_ARGUMENT'}}]}})
