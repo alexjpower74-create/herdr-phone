@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# check-no-personal-data — guard against personal data leaking into a public git tree.
+#
+# Scans the tracked text files of a git repository for things that should never
+# ship in a public repo:
+#   - home directory paths        /home/alexander  /Users/alexander
+#   - this machine's hostname     $(hostname)          (whole word)
+#   - this machine's username     $USER / id -un       (whole word)
+#   - LAN hostnames               something.local  .lan  .home
+#   - Gmail addresses             anyone@gmail.com
+#   - 1Password secret references op://vault/item/field
+#   - Tailscale addresses         100.64.0.0 – 100.127.255.255 (CGNAT range)
+#
+# Usage:
+#   check-no-personal-data [--quiet] [DIR]      scan DIR (default: cwd) — exit 1 on any hit
+#   check-no-personal-data --self-test          prove the scanner can fail, then that a clean repo passes
+#   check-no-personal-data --help
+#
+# Allow list: a file `.personal-data-allow` at the repo root holds one extended
+# regex per line (blank lines and `#` comments ignored). A hit is dropped when
+# its printed `file:line: match` line matches any allow regex. Example lines:
+#   contact@gmail\.com$          # a public contact address you chose to show
+#   ^docs/archive/               # everything under a path
+#
+# Design notes:
+#   - `set -u` only, never `set -e`: bare grep exits 1 for "no match", which is
+#     the success case for a guard. Every grep result is captured and asserted on.
+#   - Only `git ls-files` (tracked) files are scanned; binaries (grep -I),
+#     node_modules, package-lock.json, this script and the allow file are skipped.
+#   - Patterns for hostname/username are built at run time, so the script itself
+#     contains no machine-specific values beyond the fixed home paths.
+
+set -u
+
+QUIET=0
+SELF_TEST=0
+TARGET=""
+
+usage() {
+  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --quiet|-q) QUIET=1 ;;
+    --self-test) SELF_TEST=1 ;;
+    --help|-h) usage; exit 0 ;;
+    --) ;;
+    -*) echo "check-no-personal-data: unknown option: $arg" >&2; usage >&2; exit 2 ;;
+    *) TARGET="$arg" ;;
+  esac
+done
+
+say() { [ "$QUIET" -eq 1 ] || echo "$@"; }
+
+# ---------------------------------------------------------------------------
+# Pattern list
+# ---------------------------------------------------------------------------
+build_patterns() {
+  PATTERNS=()
+  PATTERNS+=('/home/alexander')
+  PATTERNS+=('/Users/alexander')
+
+  local host user
+  host="$(hostname 2>/dev/null || true)"
+  host="${host%%.*}"
+  user="${USER:-$(id -un 2>/dev/null || true)}"
+
+  # Generic account names (CI runners, containers) would flag ordinary prose
+  # like "test runner", so they are not treated as personal.
+  case "$user" in
+    ""|root|runner|ubuntu|user|ci|admin|node|vscode|codespace) ;;
+    *) PATTERNS+=("\\b$(escape_re "$user")\\b") ;;
+  esac
+  case "$host" in
+    ""|localhost|runner|ubuntu|ci) ;;
+    *) PATTERNS+=("\\b$(escape_re "$host")\\b") ;;
+  esac
+
+  # LAN hostnames ending in .local / .lan / .home. The first label may not be
+  # preceded by a dot (`.env.local`) and the suffix may not be followed by
+  # another file-name label (`SECRETS.local.txt`), so ordinary file names pass.
+  PATTERNS+=('(^|[^A-Za-z0-9_.-])[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)*\.(local|lan|home)($|[^A-Za-z0-9_.-]|\.($|[^A-Za-z0-9_-]))')
+  # Gmail addresses
+  PATTERNS+=('[A-Za-z0-9._%+-]+@gmail\.com\b')
+  # 1Password secret references
+  PATTERNS+=('op://[A-Za-z0-9 _./-]+')
+  # Tailscale CGNAT range 100.64.0.0/10
+  PATTERNS+=('\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b')
+}
+
+escape_re() {
+  printf '%s' "$1" | sed 's/[][\.*^$/+?(){}|]/\\&/g'
+}
+
+# ---------------------------------------------------------------------------
+# Scan
+# ---------------------------------------------------------------------------
+scan() {
+  local dir="$1"
+  local root
+  root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "check-no-personal-data: not a git repository: $dir" >&2
+    return 2
+  }
+
+  build_patterns
+  local grep_args=()
+  local p
+  for p in "${PATTERNS[@]}"; do grep_args+=(-e "$p"); done
+
+  # Tracked files, minus the skip list. NUL-safe.
+  local raw
+  raw="$(
+    cd "$root" && git ls-files -z \
+      | tr '\0' '\n' \
+      | grep -Ev '(^|/)node_modules/|(^|/)package-lock\.json$|(^|/)check-no-personal-data$|(^|/)\.personal-data-allow$' \
+      | tr '\n' '\0' \
+      | xargs -0 -r grep -nHIoE "${grep_args[@]}" -- 2>/dev/null
+  )"
+  # xargs may run grep several times; any hit is a hit. No-match is exit 1 and
+  # is NOT an error here, which is why nothing above is allowed to abort.
+
+  # Normalise to "file:line: match" before the allow list runs, so allow
+  # regexes match exactly what is printed. The hostname pattern has to capture
+  # a boundary character on each side; those are stripped here.
+  local hits
+  hits="$(printf '%s\n' "$raw" | sed -E 's/^([^:]+:[0-9]+):[^A-Za-z0-9/]?/\1: /; s/[^A-Za-z0-9/]$//' | awk 'NF && !seen[$0]++')"
+
+  # Apply the allow list
+  local allow="$root/.personal-data-allow"
+  local filtered="$hits"
+  if [ -n "$hits" ] && [ -f "$allow" ]; then
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in ""|\#*) continue ;; esac
+      filtered="$(printf '%s\n' "$filtered" | grep -vE -- "$line" || true)"
+      [ -n "$filtered" ] || break
+    done < "$allow"
+  fi
+
+  if [ -n "$filtered" ]; then
+    if [ "$QUIET" -eq 0 ]; then
+      echo "check-no-personal-data: personal data found in $root" >&2
+      printf '%s\n' "$filtered"
+    fi
+    return 1
+  fi
+  say "check-no-personal-data: clean ($root)"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Self-test: positive control first, then the clean case.
+# ---------------------------------------------------------------------------
+self_test() {
+  local self tmp bad out rc fails=0
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  tmp="$(mktemp -d)"
+  # shellcheck disable=SC2064  -- expand now: $tmp is local to this function
+  trap "rm -rf '$tmp'" EXIT
+
+  mk_repo() {
+    mkdir -p "$1" && git -C "$1" init -q \
+      && git -C "$1" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init
+  }
+
+  # 1. Known-bad repo: scanner MUST complain about every planted item.
+  bad="$tmp/bad"; mk_repo "$bad"
+  cat > "$bad/notes.md" <<'EOF'
+# planted personal data (self-test fixture)
+path: /home/alexander/Projects/thing
+mac:  /Users/alexander/Projects/thing
+mail: someone.private@gmail.com
+op:   op://Private/Some Item/password
+ts:   100.101.102.103
+lan:  mybox.local and printer.lan and nas.home
+EOF
+  printf 'harmless\n' > "$bad/ok.txt"
+  git -C "$bad" add -A
+  out="$("$self" "$bad" 2>&1)"; rc=$?
+  if [ "$rc" -ne 1 ]; then
+    echo "SELF-TEST FAIL: known-bad repo exited $rc, expected 1" >&2; fails=$((fails+1))
+  fi
+  local want
+  for want in '/home/alexander' '/Users/alexander' 'someone.private@gmail.com' 'op://Private' '100.101.102.103' 'mybox.local' 'printer.lan' 'nas.home'; do
+    if ! printf '%s\n' "$out" | grep -qF -- "$want"; then
+      echo "SELF-TEST FAIL: scanner did not report planted value: $want" >&2; fails=$((fails+1))
+    fi
+  done
+  if ! printf '%s\n' "$out" | grep -qE '^notes\.md:[0-9]+: '; then
+    echo "SELF-TEST FAIL: output is not in file:line: match form" >&2; fails=$((fails+1))
+  fi
+  if printf '%s\n' "$out" | grep -q 'ok.txt'; then
+    echo "SELF-TEST FAIL: clean file ok.txt was reported" >&2; fails=$((fails+1))
+  fi
+
+  # 2. Untracked bad file must NOT be scanned (only git ls-files).
+  local clean="$tmp/clean"; mk_repo "$clean"
+  printf 'nothing personal here\n' > "$clean/README.md"
+  printf 'hello\n' > "$clean/.env.local"
+  git -C "$clean" add -A
+  printf '/home/alexander/untracked\n' > "$clean/scratch.md"
+  out="$("$self" --quiet "$clean" 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "SELF-TEST FAIL: clean repo exited $rc, expected 0; output: $out" >&2; fails=$((fails+1))
+  fi
+
+  # 3. Allow list drops an allowed hit and only that hit.
+  local allowed="$tmp/allowed"; mk_repo "$allowed"
+  printf 'Contact: public.contact@gmail.com\n' > "$allowed/README.md"
+  printf 'public\\.contact@gmail\\.com\n' > "$allowed/.personal-data-allow"
+  git -C "$allowed" add -A
+  out="$("$self" --quiet "$allowed" 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "SELF-TEST FAIL: allow-listed repo exited $rc, expected 0; output: $out" >&2; fails=$((fails+1))
+  fi
+  printf 'also /home/alexander/x\n' >> "$allowed/README.md"
+  git -C "$allowed" add -A
+  out="$("$self" --quiet "$allowed" 2>&1)"; rc=$?
+  if [ "$rc" -ne 1 ]; then
+    echo "SELF-TEST FAIL: allow list hid an unrelated hit (exit $rc)" >&2; fails=$((fails+1))
+  fi
+
+  if [ "$fails" -gt 0 ]; then
+    echo "check-no-personal-data --self-test: FAILED ($fails)" >&2
+    return 1
+  fi
+  say "check-no-personal-data --self-test: OK (positive control fired, clean repo passed, allow list honoured)"
+  return 0
+}
+
+if [ "$SELF_TEST" -eq 1 ]; then
+  self_test
+  exit $?
+fi
+
+scan "${TARGET:-.}"
+exit $?

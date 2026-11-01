@@ -1,0 +1,11 @@
+name: hygiene
+on: [push, pull_request]
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scanner self-test
+        run: tools/check-no-personal-data --self-test
+      - name: No personal data
+        run: tools/check-no-personal-data
