@@ -228,8 +228,8 @@ test.describe("screen scrolling", () => {
   }) => {
     const mock = await setup(page);
     await page
-    .getByRole("button", { name: "Show readable text", exact: true })
-    .tap();
+      .getByRole("button", { name: "Show readable text", exact: true })
+      .tap();
     const viewport = page.locator(".terminal-viewport");
     const read = page.locator(".terminal-read");
     await expect(read).toBeVisible();
