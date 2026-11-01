@@ -53,6 +53,16 @@ test("second picker keeps default scope explicit and rejects unhandled scrolled 
   expect(detectPrompt(text + "\nNew task ready", "idle", "model-b")).toBeNull();
   expect(
     detectPrompt(
+      text.replace(
+        "   Enter to set as default · s to use this session only · Esc to cancel",
+        "",
+      ),
+      "idle",
+      "model-b",
+    ),
+  ).toBeNull();
+  expect(
+    detectPrompt(
       text.replace("Enter to set as default", "Confirm"),
       "idle",
       "model-b",
