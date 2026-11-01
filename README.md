@@ -56,7 +56,7 @@ terminals. The browser source and its own checks live under `web/`.
 Drafts remain separate for each terminal while the page is open. Failed sends
 keep the draft and are never replayed automatically. A blocked terminal shows
 its current dialog before offering a separate “Send anyway” action. Closing
-or reloading the page clears local drafts.
+or reloading the page clears local drafts. See the [phone compose preview](docs/screens/compose-webkit.png) for the controls with neutral sample data.
 
 ## Security
 A paired phone can read every terminal and type into it, so treat pairing like a login to your computer. Keep the bridge on a private network such as Tailscale, never the public internet, and revoke a lost device at once.
