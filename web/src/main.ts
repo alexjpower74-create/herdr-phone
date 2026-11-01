@@ -1,3 +1,4 @@
+import { TerminalPull } from "./terminal-pull";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import "@fontsource/geist/400.css";
@@ -30,6 +31,7 @@ let currentText = "",
   usedPrompt = "",
   screenGeneration = 0;
 let conversation: Conversation | undefined;
+let terminalPull: TerminalPull | undefined;
 let conversationOpen = false;
 let terminalEpoch = 0;
 let appEpoch = 0;
@@ -215,6 +217,8 @@ function notice(message: string) {
   el.textContent = message;
 }
 function disposeTerminal() {
+  terminalPull?.dispose();
+  terminalPull = undefined;
   cancelSubmissions();
   releasePreviews();
   terminalEpoch++;
@@ -497,6 +501,7 @@ async function showTerminal(desired?: string) {
     passive: true,
   });
   root.append(viewport);
+  terminalPull = new TerminalPull(viewport, info, () => connected && !conversationOpen, () => toggleConversation(true, true));
   conversation = new Conversation(client, active.id, connected);
   root.append(conversation.host);
   const approvals = element("div", "approvals");
@@ -613,7 +618,8 @@ async function showTerminal(desired?: string) {
     })
     .catch((e) => notice((e as Error).message));
 }
-function toggleConversation(open: boolean) {
+function toggleConversation(open: boolean, newest = false) {
+  terminalPull?.reset();
   conversationOpen = open;
   const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
   if (viewport) viewport.hidden = open;
@@ -624,10 +630,12 @@ function toggleConversation(open: boolean) {
   }
   const viewToggle = root.querySelector<HTMLButtonElement>(".view-toggle");
   if (viewToggle) viewToggle.hidden = open;
-  conversation?.show(open);
+  conversation?.show(open, newest);
+  updateTerminalInfo();
   if (!open) { setTerminalView(terminalView); scaleTerminal(); }
 }
 function setTerminalView(view: TerminalView, remember = false) {
+  terminalPull?.reset();
   const viewport = root.querySelector<HTMLElement>(".terminal-viewport"),
     canvas = root.querySelector<HTMLElement>(".terminal-canvas"),
     read = root.querySelector<HTMLElement>(".terminal-read"),
@@ -698,7 +706,7 @@ function paintReadable(capturePosition = true, scrollOnly = false) {
 function updateTerminalInfo() {
   const info = document.querySelector("#terminal-info");
   if (info && active)
-    info.textContent = `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"} · ${observerLabel}`;
+    info.textContent = conversationOpen ? `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"} · ${observerLabel}` : "Earlier messages are in Conversation ↑";
 }
 function scaleTerminal() {
   if (terminalView !== "mirror") return;
@@ -1133,7 +1141,7 @@ async function start() {
     client.onConnection = (value) => {
       const changed = connected !== value;
       connected = value;
-      if (!value) cancelSubmissions();
+      if (!value) { cancelSubmissions(); terminalPull?.reset(); }
       conversation?.connection(value);
       if (!value && active)
         notice(

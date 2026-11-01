@@ -62,7 +62,8 @@ export class Conversation {
     this.cancel();
     if (this.visible && !document.hidden && this.online) void this.load();
   };
-  show(value: boolean) {
+  show(value: boolean, newest = false) {
+    if (newest) { this.following = true; this.restorePosition(); }
     this.visible = value;
     this.host.hidden = !value;
     this.cancel();
