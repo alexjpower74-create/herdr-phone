@@ -126,6 +126,77 @@ source, not the Mirror stream. Never scroll a live application to obtain history
 In particular, nonzero `terminal.read` can scroll alternate-screen applications
 in the installed core; the bridge must not use that path for pagination.
 
+### Conversation history
+
+`GET /api/terminals/:id/conversation?before=<cursor>` returns saved conversation
+history independently of terminal observation. Omit `before` for the latest page.
+Each page contains up to 50 turns, in chronological order; a turn starts with a
+user message and includes subsequent replies and tool summaries until the next
+user message. This endpoint has the same device authentication and no-store
+policy as screen reads.
+
+```ts
+type ConversationPage = {
+  available: boolean;
+  reason?: "not_configured" | "not_found" | "ambiguous" | "offline";
+  session: string | null; // opaque identity, never a filesystem path
+  revision: string; // changes when saved content changes
+  turns: Array<{
+    id: string;
+    entries: Array<{
+      id: string;
+      role: "user" | "assistant" | "tool";
+      text: string; // plain text; tool entries contain a bounded one-line name
+    }>;
+  }>;
+  nextCursor: string | null; // opaque older-page cursor; null at the beginning
+};
+```
+
+Messages render as text, never HTML. User messages are highlighted, replies are
+plain, and tool calls remain one-line summaries without arguments or output.
+Instructions, internal reasoning, duplicate event copies, and compaction records
+are excluded. An incomplete final JSONL record waits for its newline. Stable entry
+and turn IDs allow the client to merge refreshed latest pages without duplication.
+The Conversation view polls the latest page while visible, follows new content
+only while already at the bottom, and preserves its visible anchor when older
+pages prepend. Changing terminals or sessions discards pending responses. A stale
+cursor after session replacement or file rewrite returns 409 `conversation_changed`;
+an invalid cursor returns 400 `invalid_cursor`. Unavailable history returns an
+empty page with an explicit reason; terminal controls remain available.
+
+The server reads a private configuration file at
+`HERDR_PHONE_TRANSCRIPTS_CONFIG` (default `~/.config/herdr-phone/transcripts.json`):
+
+```json
+{
+  "machines": {
+    "local": {
+      "sources": [
+        { "format": "messages", "root": "~/conversation-logs", "sessions": "~/session-index" },
+        { "format": "responses", "root": "~/response-logs" }
+      ]
+    },
+    "remote": {
+      "ssh": "configured-ssh-alias",
+      "sources": [{ "format": "responses", "root": "~/response-logs" }]
+    }
+  }
+}
+```
+
+Formats describe message-envelope and response-item JSONL records. Roots and
+machine aliases are operator configuration only, never accepted from a browser.
+Resolve a live terminal's foreground PID (or its verified descendants) to its
+open transcript descriptor or matching PID session record. Require a unique match
+inside a configured canonical root; never select an unrelated session merely
+because it shares a working directory or has the newest modification time.
+Recheck process/session identity before returning content. Remote reads use
+noninteractive SSH to the configured alias and a transient Python 3 reader sent
+over stdin; nothing is installed or written remotely. Local reads use the same
+read-only resolver. Neither path attaches to, sends input to, scrolls or resizes
+the terminal. Python 3 and SSH are runtime prerequisites for this optional source.
+
 `POST /api/terminals/:id/keys`, body `{ "keys": ["shift+tab"] }`, returns
 `{ "ok": true }` after core acknowledgement. Supported bar names are
 `shift+tab`, `esc`, `up`, `down`, `enter`, `ctrl+c`; `backspace`, `tab`,

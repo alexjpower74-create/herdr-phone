@@ -21,7 +21,7 @@ public-safe [home preview](docs/screens/home-webkit.png) uses neutral sample spa
 1. **Home is the Herdr Spaces sidebar.** It has the "Spaces" header, then groups for "This computer" and "mac", each with its online dot. Every space has its coloured letter tile, its name, and a subtitle with the repo and branch. Herdr's own colours, fonts and spacing.
 2. **The + buttons work.** The + next to a machine opens a new space on that machine. The + at the top opens a new space too.
 3. **Tap a space and its first tab opens,** with the other tabs across the top. Tap a tab to switch.
-4. **The tab is the live terminal,** with the live ANSI-coloured desktop Mirror fitted to the phone width by default and browser pinch zoom. A tab-header toggle opens Read: readable, soft-wrapped current-screen text that follows the newest output until you scroll up. Both views expose retained terminal scrollback, starting with about 500 history rows and loading older rows at the top, without scrolling or resizing the desktop. The last view choice is remembered on the device. Tapping the screen brings up a compose box. Text stays on the phone until Send or Enter submits the whole message, including punctuation and Unicode. A blocked dialog requires a separate explicit confirmation before sending anyway.
+4. **The tab is the live terminal,** with the live ANSI-coloured desktop Mirror fitted to the phone width by default and browser pinch zoom. A tab-header toggle opens Read: readable, soft-wrapped current-screen text that follows the newest output until you scroll up. Both views expose retained terminal scrollback, starting with about 500 history rows and loading older rows at the top, without scrolling or resizing the desktop. A separate Conversation control opens saved messages, paged 50 turns at a time back to the beginning, with user messages highlighted and tool calls collapsed to one line. It reads the matching process's transcript on either machine without touching the terminal. The last Mirror/Read choice is remembered on the device. Tapping the screen brings up a compose box. Text stays on the phone until Send or Enter submits the whole message, including punctuation and Unicode. A blocked dialog requires a separate explicit confirmation before sending anyway.
 5. **Key bar** above the keyboard:
    - **Shift+Tab**, to cycle modes
    - **Esc**
@@ -33,7 +33,7 @@ public-safe [home preview](docs/screens/home-webkit.png) uses neutral sample spa
 8. **Pairing by code, and lock-screen notifications** when an agent needs you or finishes.
 
 ## Later (not v1)
-- A chat view: an agent's conversation as messages instead of the terminal.
+- Rich conversation formatting and searchable saved sessions.
 - Rename an agent, and jump to it on the desktop.
 - Your Herdr mods on the phone, a files and changes view, and an iPad layout.
 
@@ -78,3 +78,14 @@ Published fixtures and screenshots use neutral sample data. Local evidence,
 machine configuration and credentials stay outside the tracked tree. One final
 whole-suite run follows the phase reviews; intermediate runs target changed
 behaviour only.
+
+## Conversation work
+
+The API contract precedes implementation. The bridge slice owns `server/` and
+its transcript fixtures, the web slice owns `web/`, and integration owns root
+configuration, `tools/`, documentation and private machine configuration. Each
+slice reviews the other's first working commit. Verification uses a committed
+QA worktree, both supported transcript schemas, explicit failure controls, and
+real WebKit scrolling from the newest page to the first message at 390×844.
+Disposable processes and helper tabs occupy a separate test space and are closed
+when finished. Production files and panes remain untouched.
