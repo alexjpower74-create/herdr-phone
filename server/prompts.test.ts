@@ -112,3 +112,50 @@ test("model switch confirmation requires exact current cache warning and matchin
     expect(detectPrompt(stale, "done", "confirmation")).toBeNull();
   expect(detectPrompt(text, "done", "confirmation", false)).toBeNull();
 });
+test("narrow picker joins aligned descriptions and exact wrapped footer without swallowing output", async () => {
+  const text = await fixture("model-b-wrapped");
+  const prompt = detectPrompt(text, "idle", "narrow-picker");
+  expect(prompt?.options).toHaveLength(5);
+  expect(prompt?.options[2].label).toContain(
+    "for your hardest and longest-running tasks",
+  );
+  expect(prompt?.options[0].keys).toEqual(["up", "up", "up", "up", "enter"]);
+  expect(prompt?.options[4].keys).toEqual(["enter"]);
+  expect(
+    prompt?.options.every((option) =>
+      option.label.endsWith("default for new sessions"),
+    ),
+  ).toBe(true);
+  for (const stale of [
+    text + "\nNew output",
+    text.replace("  · Esc to cancel", "  · Enter to cancel"),
+    text.replace(
+      "                              quick answers",
+      "  quick answers",
+    ),
+    text.replace(
+      "\n  ◐ Medium",
+      "\n                              unexpected output\n  ◐ Medium",
+    ),
+    text.replace("  ❯ 5.", "  ❯ 6."),
+  ])
+    expect(detectPrompt(stale, "idle", "narrow-picker")).toBeNull();
+});
+test("narrow model confirmation joins warning paragraphs and retains target matching", async () => {
+  const text = await fixture("model-confirm-b-wrapped");
+  const prompt = detectPrompt(text, "done", "narrow-confirmation");
+  expect(prompt?.options).toHaveLength(2);
+  expect(prompt?.options[0].label).toMatch(
+    /^Yes, switch to Model A\s+\(default\)$/,
+  );
+  expect(prompt?.options[1].keys).toEqual(["down", "enter"]);
+  for (const stale of [
+    text + "\nChanged model",
+    text.replace("  tokens", "  something else"),
+    text.replace("  history gets re-read.", "  history is unchanged."),
+    text.replace("Switching to Model A", "Switching to Model B"),
+    text.replace("\n  tokens\n\n", "\n  tokens\nUnexpected output\n\n"),
+  ])
+    expect(detectPrompt(stale, "done", "narrow-confirmation")).toBeNull();
+  expect(detectPrompt(text, "idle", "narrow-confirmation")).toBeNull();
+});

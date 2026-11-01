@@ -1,0 +1,21 @@
+  Select model
+  Switch between client models. Your pick becomes the
+  default for new sessions. For other/previous model
+  names, specify with --model.
+
+    1. Default (recommended)  Model A  · Best for
+                              everyday, complex tasks
+    2. Beta                   Model A  · Best for
+                              everyday, complex tasks
+    3. Gamma                  Model B   · Most capable
+                              for your hardest and
+                              longest-running tasks
+    4. Lambda                 Model C    · Efficient
+                              for routine tasks
+  ❯ 5. Delta ✔                Model D   · Fastest for
+                              quick answers
+
+  ◐ Medium effort (default) ←/→ to adjust
+
+  Enter to set as default · s to use this session only
+  · Esc to cancel
