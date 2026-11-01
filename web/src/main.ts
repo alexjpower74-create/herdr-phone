@@ -983,6 +983,7 @@ function frame(message: Frame) {
     const changed = connected !== message.connected;
     connected = message.connected;
     if (!connected) {
+      terminalPull?.reset();
       cancelSubmissions();
       client.cancelPending();
       if (active)
