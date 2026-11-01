@@ -164,7 +164,11 @@ try {
         return false;
       }
     }, "Fixture did not start");
-    displayed = await core.call("terminal.get", { terminal: id });
+    const ready = JSON.parse(await file(machine, root, "ready.json"));
+    await eventually(async () => {
+      displayed = await core.call("terminal.get", { terminal: id });
+      return displayed.foreground?.pid === ready.pid;
+    }, "Core has not identified the disposable foreground process");
     const size = [displayed.cols, displayed.rows];
     const headers = { Authorization: `Bearer ${paired.token}` };
     const endpoint = `http://127.0.0.1:${app.server.port}/api/terminals/${encodeURIComponent(id)}/conversation`;
