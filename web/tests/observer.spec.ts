@@ -198,3 +198,31 @@ test("history recomputes a moved anchor after later replay chunks drain", async 
     await page.evaluate(() => (window as any).releaseReplayPaints?.());
   }
 });
+
+test("continuous 200Hz output permits initial observation and anchored history swaps", async ({ page }) => {
+  const mock = await setup(page);
+  async function busyReplay(text: string, ready: () => Promise<boolean>) {
+    mock.output(text);
+    let seq = 1;
+    const timer = setInterval(() => mock.output("\r\x1b[2KBusy " + seq, seq++), 5);
+    try {
+      await expect.poll(ready, { timeout: 1200, intervals: [16] }).toBe(true);
+      expect(seq).toBeGreaterThan(3);
+      const before = seq;
+      await page.waitForTimeout(100);
+      expect(seq).toBeGreaterThan(before + 5);
+    } finally { clearInterval(timer); }
+  }
+  await busyReplay("\x1b[41m" + history(500, 1023) + "\x1b[0m",
+    async () => Boolean((await inspect(page))?.observer));
+  const viewport = page.locator(".terminal-viewport");
+  const bounds = await viewport.boundingBox();
+  await page.mouse.move(bounds!.x + 100, bounds!.y + 80);
+  await page.mouse.wheel(0, -100000);
+  await expect.poll(() => mock.watches.length).toBe(2);
+  await busyReplay(history(0, 1023), async () => !(await inspect(page)).historyBusy);
+  const data = await inspect(page);
+  expect(data.rows[data.viewportY].text).toBe("Retained row 500");
+  expect(data.resets).toBe(2);
+  expect(mock.writes).toEqual([]);
+});

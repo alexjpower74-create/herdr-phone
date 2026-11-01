@@ -124,15 +124,10 @@ export class ObserverDisplay {
         if (!this.staging) { this.changed(); return; }
         if (this.anchor && this.anchorIndex(target) < 0) return;
         if (this.readyFrame) return;
-        // Two paints allow the replay queue to drain while the old view stays visible.
-        let stableSeq = this.seq;
+        // Swap at a parsed byte boundary. Output may keep arriving continuously;
+        // the same emulator consumes queued bytes after it becomes visible.
         const commit = () => {
             if (id !== this.watchId || !this.staging || !this.host) return;
-            if (this.pendingBytes || stableSeq !== this.seq) {
-              stableSeq = this.seq;
-              this.readyFrame = requestAnimationFrame(commit);
-              return;
-            }
             this.readyFrame = 0;
             const index = this.anchor ? this.anchorIndex(this.staging) : -1;
             if (this.anchor && index < 0) return;
