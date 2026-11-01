@@ -642,6 +642,7 @@ export function start(
     consumeCoreEvent: consumeEvent,
     stop() {
       stopped = true;
+      conversations.close?.();
       push.stopped = true;
       events?.close();
       clearInterval(interval);
