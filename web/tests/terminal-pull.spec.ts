@@ -45,11 +45,13 @@ test('deliberate top pull reveals earlier messages and returns to newest in Mirr
     await touch(page, 'touchMove', [{ id: 1, x, y: y + 20 }]);
     await expect(page.getByText('Earlier messages', { exact: true })).toBeVisible();
     await expect(page.locator('.terminal-viewport')).toBeVisible();
+    if (process.env.GESTURE_SHOTS) await page.screenshot({ path: `${process.env.GESTURE_SHOTS}/pull-${mode}.png` });
     await touch(page, 'touchMove', [{ id: 1, x, y: y + 110 }]);
     model.data.push({ id: `fresh-${mode}`, entries: [{ id: `fresh-${mode}`, role: 'assistant', text: `Newest ${mode} reply` }] } as any);
     await touch(page, 'touchEnd', [{ id: 1, x, y: y + 110 }]);
     const host = page.locator('.conversation');
     await expect(host.getByText(`Newest ${mode} reply`)).toBeVisible();
+    if (process.env.GESTURE_SHOTS) await page.screenshot({ path: `${process.env.GESTURE_SHOTS}/newest-${mode}.png` });
     await expect.poll(() => host.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThan(2);
     await page.mouse.move(x, y + 120); await page.mouse.wheel(0, -500);
     await expect.poll(() => host.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeGreaterThan(100);
