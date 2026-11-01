@@ -1,0 +1,25 @@
+#!/usr/bin/env bun
+import { Store } from "../server/security";
+import { start } from "../server/index";
+const [command, sub, ...args] = process.argv.slice(2);
+try {
+  const store = new Store();
+  if (command === "pair") console.log(await store.pairing());
+  else if (command === "devices" && sub === "list")
+    console.log(JSON.stringify(await store.list(), null, 2));
+  else if (command === "devices" && sub === "revoke" && args.length) {
+    await store.revoke(args.join(" "));
+    console.log("Device revoked.");
+  } else if (command === "serve" || !command) start();
+  else {
+    console.error(
+      "Usage: herdr-phone pair | devices list | devices revoke <label-or-id> | serve",
+    );
+    process.exitCode = 2;
+  }
+} catch {
+  console.error(
+    "Request failed. Check private configuration and device selection.",
+  );
+  process.exitCode = 1;
+}

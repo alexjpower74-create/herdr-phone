@@ -129,6 +129,15 @@ complete-message action using `terminal.send` (which includes Enter). It
 must not force past a blocked state. Interactive typing uses `/input` and
 `/keys`, so menus and explicit approval choices remain usable.
 
+Installed-core limitation: the current named-key parser accepts a subset of
+ASCII. Spaces use the `space` alias and uppercase letters use `shift+letter`.
+It cannot preserve the shifted punctuation `!"#$%&()*+:<>?@^_{|}~` or non-ASCII
+characters. Until a safe literal-text transport is available, `/input` and
+printable `/keys` reject a request containing any unsupported character with
+400 `unsupported_input`, before writing any part of it. The key bar is supported.
+Arbitrary literal typing remains blocked; the intended literal-input contract
+above is not yet fully implemented.
+
 No resize endpoint exists. The client sets its own emulator to the desktop
 cols/rows and scales the rendered terminal to the available width. Use
 `terminal.attach` only with `observe: true`, and only after a disposable
