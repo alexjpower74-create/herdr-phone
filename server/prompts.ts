@@ -24,10 +24,29 @@ export function detectPrompt(
   let confirmationModel = "";
   for (let i = lines.length - 1; i >= 0; i--) {
     if (/^\s*Switch model\?\s*$/.test(lines[i]) && status === "done") {
-      const content = lines
-        .slice(i + 1)
-        .map((line) => line.trim())
-        .filter(Boolean);
+      const remainder = lines.slice(i + 1);
+      const firstOption = remainder.findIndex((line) =>
+        /^\s*([›❯>])?\s*1\.\s/.test(line),
+      );
+      if (firstOption < 0) return null;
+      const paragraphs = remainder
+        .slice(0, firstOption)
+        .join("\n")
+        .trim()
+        .split(/\n\s*\n/)
+        .map((paragraph) =>
+          paragraph
+            .split("\n")
+            .map((line) => line.trim())
+            .join(" "),
+        );
+      const content = [
+        ...paragraphs,
+        ...remainder
+          .slice(firstOption)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ];
       const cached = content[1]?.match(
         /^This conversation is cached for the current model\. Switching to (.+) means the full history gets re-read\.$/,
       );
@@ -75,10 +94,27 @@ export function detectPrompt(
   }
   if (heading < 0 || (kind! === "approval" && status !== "blocked"))
     return null;
-  const block = lines.slice(heading + 1);
+  let block = lines.slice(heading + 1);
+  if (family === "b" && kind! === "menu") {
+    const footerStart = block.findIndex((line) =>
+      /^\s*Enter to set as default/.test(line),
+    );
+    const expected =
+      "Enter to set as default · s to use this session only · Esc to cancel";
+    if (
+      footerStart >= 0 &&
+      block
+        .slice(footerStart)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(" ") === expected
+    )
+      block = [...block.slice(0, footerStart), expected];
+  }
   const options: { label: string; selected: boolean }[] = [];
   let footer = false;
   let started = false;
+  let continuationColumn: number | undefined;
   for (const line of block) {
     const match = line.match(/^\s*([›❯>↓])?\s*(\d+)\.\s+(.+)$/);
     if (match) {
@@ -88,8 +124,20 @@ export function detectPrompt(
         selected: Boolean(match[1] && match[1] !== "↓"),
       });
       started = true;
+      const description = match[3].match(/ {2,}(\S.*)$/);
+      continuationColumn = description
+        ? line.length - description[1].length
+        : undefined;
     } else if (started && line.trim()) {
-      if (/^\s*Press enter to confirm or esc to cancel\s*$/i.test(line))
+      if (
+        family === "b" &&
+        kind! === "menu" &&
+        !footer &&
+        continuationColumn !== undefined &&
+        line.search(/\S/) === continuationColumn
+      ) {
+        options.at(-1)!.label += " " + line.trim();
+      } else if (/^\s*Press enter to confirm or esc to cancel\s*$/i.test(line))
         footer = true;
       else if (
         family === "b" &&
@@ -110,7 +158,7 @@ export function detectPrompt(
         (/^\s*… \+\d+ models\s*$/.test(line) ||
           /^\s*◐ .+ effort \(default\) ←\/→ to adjust\s*$/.test(line))
       ) {
-        /* Picker metadata. */
+        continuationColumn = undefined;
       } else if (
         family === "a" &&
         kind! === "menu" &&
@@ -119,6 +167,8 @@ export function detectPrompt(
       ) {
         options.at(-1)!.label += " " + line.trim();
       } else return null;
+    } else if (!line.trim()) {
+      continuationColumn = undefined;
     }
   }
   if (
