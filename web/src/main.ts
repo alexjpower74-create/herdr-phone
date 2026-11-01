@@ -69,7 +69,12 @@ function header(title: string, back = false) {
         "icon back",
       ),
     );
-  else head.append(element("span", "brand-mark", "H"));
+  else {
+    const mark = element("img", "brand-mark");
+    mark.src = "/brand.png";
+    mark.alt = "";
+    head.append(mark);
+  }
   head.append(element("h1", "", title));
   head.append(button("•••", settings, "icon"));
   return head;
@@ -80,8 +85,11 @@ function pairing(message = "") {
   root.replaceChildren();
   root.append(header("Herdr"));
   const main = element("main", "pairing");
+  const mark = element("img", "pair-symbol");
+  mark.src = "/brand.png";
+  mark.alt = "";
   main.append(
-    element("div", "pair-symbol", "H"),
+    mark,
     element("h2", "", "Your spaces, with you."),
     element(
       "p",

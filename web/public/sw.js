@@ -20,7 +20,7 @@ self.addEventListener("push", (event) => {
           : "A terminal needs you",
       tag: payload.tag,
       data: { url },
-      icon: "/icon.svg",
+      icon: "/icon-192.png",
     }),
   );
 });
