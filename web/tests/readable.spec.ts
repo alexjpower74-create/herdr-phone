@@ -239,6 +239,34 @@ test.describe("screen scrolling", () => {
       bounds!.x + bounds!.width / 2,
       bounds!.y + bounds!.height / 2,
     );
+    // Even a small upward movement pauses following; being near the bottom
+    // must not override the person's direction on the next output frame.
+    await page.mouse.wheel(0, -16);
+    await expect
+      .poll(() =>
+        viewport.evaluate(
+          (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+        ),
+      )
+      .toBeGreaterThan(5);
+    const small = await settledPosition(viewport);
+    expect(
+      await viewport.evaluate(
+        (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+      ),
+    ).toBeLessThan(32);
+    mock.update(wideScreen.trimEnd() + "\nSmall-scroll update.");
+    await expect(read).toContainText("Small-scroll update.");
+    expect(Math.abs((await settledPosition(viewport)) - small)).toBeLessThan(3);
+    await page.mouse.wheel(0, 10000);
+    await expect
+      .poll(() =>
+        viewport.evaluate(
+          (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+        ),
+      )
+      .toBeLessThan(3);
+    await settledPosition(viewport);
     await page.mouse.wheel(0, -700);
     await expect
       .poll(() =>
@@ -330,6 +358,9 @@ test.describe("screen scrolling", () => {
       .getByRole("button", { name: "Show desktop mirror", exact: true })
       .tap();
     mock.update(wideScreen.trimEnd() + "\nUpdate while mirroring.");
+    await expect(page.locator(".xterm-rows")).toContainText(
+      "Update while mirroring.",
+    );
     await page
       .getByRole("button", { name: "Show readable text", exact: true })
       .tap();

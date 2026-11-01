@@ -462,10 +462,11 @@ function setTerminalView(view: TerminalView) {
 function captureReadPosition(viewport: HTMLElement) {
   if (terminalView !== "read") return;
   const position = viewport.scrollTop;
-  const atBottom =
-    viewport.scrollHeight - position - viewport.clientHeight < 32;
-  if (atBottom) followingNewest = true;
+  const remaining = viewport.scrollHeight - position - viewport.clientHeight;
+  if (remaining < 1) followingNewest = true;
   else if (position < readPosition - 1) followingNewest = false;
+  else if (position > readPosition + 1 && remaining < 32)
+    followingNewest = true;
   readPosition = position;
 }
 function paintReadable(capturePosition = true) {
