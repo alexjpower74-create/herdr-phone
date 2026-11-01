@@ -10,11 +10,11 @@ function turns(format: "messages" | "responses", count = 173): ConversationPage[
   ] }));
 }
 async function setup(page: Page, format: "messages" | "responses" = "messages", initial: { delayLatest?: boolean; unavailable?: boolean } = {}) {
-  const model = { data: turns(format), session: format, status: 200, unavailable: initial.unavailable ?? false, requests: [] as string[], pending: undefined as Route | undefined, delayOlder: false, delayLatest: initial.delayLatest ?? false, sockets: [] as WebSocketRoute[] };
+  const model = { data: turns(format), session: format, status: 200, code: "unavailable", network: false, reason: "not_found" as ConversationPage["reason"], page: undefined as ConversationPage | undefined, unavailable: initial.unavailable ?? false, requests: [] as string[], pending: undefined as Route | undefined, delayOlder: false, delayLatest: initial.delayLatest ?? false, sockets: [] as WebSocketRoute[] };
   const result = (before?: string): ConversationPage => {
     const end = before ? Number(before) : model.data.length;
     const start = Math.max(0, end - 50);
-    return { available: !model.unavailable, reason: model.unavailable ? "not_found" : undefined, session: model.session, revision: String(model.data.length), turns: model.unavailable ? [] : model.data.slice(start, end), nextCursor: start ? String(start) : null };
+    return { available: !model.unavailable, reason: model.unavailable ? model.reason : undefined, session: model.session, revision: String(model.data.length), turns: model.unavailable ? [] : model.data.slice(start, end), nextCursor: start ? String(start) : null };
   };
   await page.addInitScript(() => localStorage.setItem("herdr-phone.device", "test-device-token"));
   await page.routeWebSocket("**/api/ws", ws => {
@@ -30,8 +30,9 @@ async function setup(page: Page, format: "messages" | "responses" = "messages", 
       model.requests.push(url.pathname + url.search);
       const before = url.searchParams.get("before") ?? undefined;
       if ((before && model.delayOlder) || (!before && model.delayLatest)) { model.pending = route; return; }
-      if (model.status !== 200) return route.fulfill({ status: model.status, json: { error: { code: "unavailable", message: "private runtime information" } } });
-      return route.fulfill({ json: result(before) });
+      if (model.network) return route.abort("failed");
+      if (model.status !== 200) return route.fulfill({ status: model.status, json: { error: { code: model.code, message: "private runtime information /private/transcript <img src=x>" } } });
+      return route.fulfill({ json: model.page ?? result(before) });
     }
     return route.fulfill({ json: { ok: true } });
   });
@@ -115,11 +116,11 @@ test("poll updates current turn, appends uniquely, preserves nodes and reading p
 test("unavailable, retry, errors and disconnect keep terminal controls usable", async ({ page }) => {
   const { open, model } = await setup(page, "messages", { unavailable: true });
   await open();
-  await expect(page.getByText("Saved conversation is unavailable for this terminal.")).toBeVisible();
+  await expect(page.getByText("No saved conversation was found for this terminal.")).toBeVisible();
   await hit(page.getByRole("button", { name: "Retry conversation" }));
   model.unavailable = false; model.status = 503;
   await page.getByRole("button", { name: "Retry conversation" }).tap();
-  await expect(page.getByText("Could not load saved conversation. Retry when connected.")).toBeVisible();
+  await expect(page.getByText("Could not load saved conversation. Please retry.")).toBeVisible();
   expect(await page.getByText("private runtime information").count()).toBe(0);
   model.status = 200;
   await page.getByRole("button", { name: "Retry conversation" }).tap();
@@ -201,4 +202,60 @@ test("revoked authentication cancels a delayed page and returns pairing", async 
   await model.pending!.fulfill({ status: 401, json: { error: { code: "unauthorized", message: "Pair this phone to continue." } } });
   await expect(page.getByRole("heading", { name: "Your spaces, with you." })).toBeVisible();
   await expect(page.locator(".conversation")).toHaveCount(0);
+});
+
+
+test("bounded pages show trimming and keep empty continuation actionable", async ({ page }) => {
+  const { model } = await setup(page, "messages", { delayLatest: true });
+  await expect.poll(() => !!model.pending).toBe(true);
+  model.delayLatest = false;
+  model.page = { available: true, session: "bounded", revision: "1", turns: [], nextCursor: "older-window", warnings: ["long_output_trimmed", "scan_limited"] };
+  await model.pending!.fulfill({ json: model.page });
+  await expect(page.getByText("[long output trimmed]", { exact: true })).toBeVisible();
+  await expect(page.getByText("Older messages remain beyond this read window.", { exact: true })).toBeVisible();
+  await expect(page.getByText("No saved messages yet.", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Beginning of conversation", { exact: true })).toHaveCount(0);
+  const older = page.getByRole("button", { name: "Load older messages" });
+  await hit(older);
+  model.page = { ...model.page, turns: [{ id: "first", entries: [{ id: "first-user", role: "user", text: "First saved message" }] }], nextCursor: null, warnings: [] };
+  await older.tap();
+  await expect(page.getByText("First saved message", { exact: true })).toBeVisible();
+  await expect(page.getByText("Beginning of conversation", { exact: true })).toBeVisible();
+});
+
+test("distinct unavailable reasons and reader errors recover without private details", async ({ page }) => {
+  const { model } = await setup(page, "messages", { unavailable: true });
+  const cases = [
+    ["not_configured", "Saved conversation is not configured for this machine."],
+    ["ambiguous", "More than one saved conversation matches this terminal."],
+    ["offline", "The conversation machine is offline. Reconnect it and retry."],
+    ["not_found", "No saved conversation was found for this terminal."],
+  ] as const;
+  for (const [reason, message] of cases) {
+    model.reason = reason;
+    await page.getByRole("button", { name: "Retry conversation" }).tap();
+    await expect(page.getByText(message, { exact: true })).toBeVisible();
+  }
+  model.unavailable = false; model.status = 503;
+  for (const [code, message] of [
+    ["conversation_too_large", "This conversation page is too large to display."],
+    ["conversation_busy", "Conversation readers are busy. Please retry shortly."],
+    ["conversation_timeout", "Loading saved conversation timed out. Please retry."],
+    ["conversation_unavailable", "The saved conversation reader is unavailable. Please retry."],
+    ["unknown", "Could not load saved conversation. Please retry."],
+  ]) {
+    model.code = code;
+    await hit(page.getByRole("button", { name: "Retry conversation" }));
+    await page.getByRole("button", { name: "Retry conversation" }).tap();
+    await expect(page.getByText(message, { exact: true })).toBeVisible();
+    await expect(page.locator(".conversation")).not.toContainText("private runtime information");
+    await expect(page.locator(".conversation img")).toHaveCount(0);
+  }
+  model.network = true;
+  await page.getByRole("button", { name: "Retry conversation" }).tap();
+  await expect(page.getByText("Could not reach the bridge. Check your connection and retry.", { exact: true })).toBeVisible();
+  model.network = false; model.status = 200;
+  await page.getByRole("button", { name: "Retry conversation" }).tap();
+  await expect(page.locator('[data-turn="turn-172"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry conversation" })).toBeHidden();
 });

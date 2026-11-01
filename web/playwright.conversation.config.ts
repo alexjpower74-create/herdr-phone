@@ -5,8 +5,8 @@ export default defineConfig({
   fullyParallel: false,
   reporter: "list",
   timeout: 60000,
-  use: { baseURL: "http://127.0.0.1:5196", viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: "block", trace: "retain-on-failure" },
+  use: { baseURL: "http://127.0.0.1:5204", viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: "block", trace: "retain-on-failure" },
   projects: [{ name: "webkit", use: { browserName: "webkit" } }],
-  webServer: { command: "npm run build && node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 5196 --strictPort", url: "http://127.0.0.1:5196", reuseExistingServer: false },
+  webServer: { command: "npm run build && node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 5204 --strictPort", url: "http://127.0.0.1:5204", reuseExistingServer: false },
   outputDir: "test-results/conversation",
 });
