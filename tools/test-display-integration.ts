@@ -239,7 +239,10 @@ finally:
   browser = await webkit.launch();
   context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: false,
     serviceWorkers: "block", recordVideo: { dir: directory, size: { width: 390, height: 844 } } });
-  await context.addInitScript((token: string) => localStorage.setItem("herdr-phone.device", token), paired.token);
+  await context.addInitScript((token: string) => {
+    if (location.protocol === "http:" || location.protocol === "https:")
+      localStorage.setItem("herdr-phone.device", token);
+  }, paired.token);
   const page = await context.newPage();
   const pageErrors: string[] = [];
   page.on("pageerror", (e: Error) => pageErrors.push(e.message));
