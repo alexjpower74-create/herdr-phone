@@ -186,7 +186,7 @@ def rpc(payload):
  try:
   v=json.loads(payload)
   method=v.get('method');params=v.get('params',{})
-  if method=='terminal.attach' and params.get('observe') and break_observe:
+  if method=='terminal.attach' and params.get('observe') and break_observe and params.get('history')==0 and params.get('cols')==13:
    params.update(observe=False,cols=13,rows=7)
    payload=json.dumps(v).encode()
   record({'method':method,**{k:params[k] for k in ['terminal','observe','cols','rows','history','lines'] if k in params}})
