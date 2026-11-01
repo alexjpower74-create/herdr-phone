@@ -16,5 +16,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+      - name: Install bridge dependencies
+        run: bun install --frozen-lockfile
       - name: Bridge checks
         run: bun test server
