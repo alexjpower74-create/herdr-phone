@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { test, expect, type Page, type Route, type WebSocketRoute } from "@playwright/test";
 const png = { name: "sample.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jXioAAAAASUVORK5CYII=", "base64") };
 const text = { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("A saved note. café 🙂\n") };
@@ -81,22 +82,43 @@ test("file-only Enter uploads exact bytes sequentially then sends IDs once", asy
   // WebKit's request interception omits multipart file payloads. Bypass interception
   // for this proof and compare bytes actually received by the loopback HTTP fixture.
   await page.unroute("**/api/**");
-  await page.request.delete("/__test/uploads");
   await page.route("**/api/terminals/*/send", async route => {
     model.sends.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
     await route.fulfill({ json: { ok: true } });
   });
-  await choose(page);
-  await page.getByRole("button", { name: "enter", exact: true }).tap();
-  await expect.poll(() => model.sends.length).toBe(1);
-  const { uploads } = await (await page.request.get("/__test/uploads")).json();
-  expect(uploads.map((file: any) => file.name)).toEqual([png.name, text.name]);
-  expect(Buffer.from(uploads[0].bytes, "base64").equals(png.buffer)).toBe(true);
-  expect(Buffer.from(uploads[1].bytes, "base64").equals(text.buffer)).toBe(true);
-  expect(uploads.every((file: any) => file.auth === "Bearer test-device-token" && file.type.startsWith("multipart/form-data; boundary="))).toBe(true);
-  expect(model.sends[0].body).toEqual({ text: "", uploads: ["upload-1", "upload-2"] });
-  await expect(page.locator(".attachment")).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).urls.revoked.length)).toBe(1);
+  const uploads: { name: string; bytes: Buffer; auth: string | undefined; type: string }[] = [];
+  const origin = new URL(page.url()).origin;
+  const receiver = createServer(async (request, response) => {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Access-Control-Allow-Headers", "authorization, content-type");
+    if (request.method === "OPTIONS") { response.writeHead(204); response.end(); return; }
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const form = await new Request("http://fixture.invalid", { method: "POST", headers: { "Content-Type": request.headers["content-type"]! }, body: Buffer.concat(chunks) }).formData();
+    const file = form.get("file") as File;
+    uploads.push({ name: file.name, bytes: Buffer.from(await file.arrayBuffer()), auth: request.headers.authorization, type: request.headers["content-type"]! });
+    response.writeHead(201, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ upload: { id: `upload-${uploads.length}`, name: file.name, type: file.type, size: file.size, converted: false } }));
+  });
+  await new Promise<void>(resolve => receiver.listen(0, "127.0.0.1", resolve));
+  const address = receiver.address();
+  if (!address || typeof address === "string") throw new Error("Fixture did not bind");
+  await page.route("**/api/terminals/*/uploads", route => route.continue({ url: `http://127.0.0.1:${address.port}/uploads` }));
+  try {
+    await choose(page);
+    await page.getByRole("button", { name: "enter", exact: true }).tap();
+    await expect.poll(() => model.sends.length).toBe(1);
+    expect(uploads.map(file => file.name)).toEqual([png.name, text.name]);
+    expect(uploads[0].bytes.equals(png.buffer)).toBe(true);
+    expect(uploads[1].bytes.equals(text.buffer)).toBe(true);
+    expect(uploads.every(file => file.auth === "Bearer test-device-token" && file.type.startsWith("multipart/form-data; boundary="))).toBe(true);
+    expect(model.sends[0].body).toEqual({ text: "", uploads: ["upload-1", "upload-2"] });
+    await expect(page.locator(".attachment")).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).urls.revoked.length)).toBe(1);
+  } finally {
+    receiver.closeAllConnections();
+    await new Promise<void>((resolve, reject) => receiver.close(error => error ? reject(error) : resolve()));
+  }
 });
 
 test("captures text and selection, locks removal during uploads and preserves later text", async ({ page }) => {
