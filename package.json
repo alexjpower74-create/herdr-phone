@@ -4,7 +4,9 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "engines": { "bun": ">=1.4.4" },
+  "engines": {
+    "bun": ">=1.4.4"
+  },
   "scripts": {
     "start": "bun server/index.ts",
     "pair": "bun bin/herdr-phone pair",
@@ -12,5 +14,8 @@
     "test:server": "bun test server",
     "check:privacy": "tools/check-no-personal-data",
     "check:privacy-self-test": "tools/check-no-personal-data --self-test"
+  },
+  "dependencies": {
+    "web-push": "3.6.7"
   }
 }
