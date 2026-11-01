@@ -162,3 +162,32 @@ test("resource limits return explicit errors instead of truncating transcript da
     await expect(source("t1")).rejects.toMatchObject({ status: 413, code: "conversation_too_large" });
   });
 });
+
+test("terminal identity is rechecked after saved file IO", async () => {
+  await fixture("responses", async ({ root, core }: any) => {
+    let count = 0;
+    const source = transcriptSource({ async call(method: string) {
+      const facts = await core.call(method);
+      return ++count === 1 ? facts : { ...facts, created_ms: 999 };
+    } }, join(root, "config.json"));
+    await expect(source("t1")).rejects.toMatchObject({ status: 409, code: "conversation_changed" });
+  });
+});
+
+test("revocation during a saved-history read rejects response and stop releases the source", async () => {
+  const root = await mkdtemp(join(tmpdir(), "conversation-revoke-"));
+  const store = new Store(root), device = await store.exchange(await store.pairing(), "Test");
+  let entered!: () => void, release!: () => void, closed = false;
+  const started = new Promise<void>(resolve => entered = resolve), wait = new Promise<void>(resolve => release = resolve);
+  const source: TranscriptSource = async () => { entered(); await wait; return { available: true, session: "opaque", revision: "revision", turns: [], nextCursor: null }; };
+  source.close = () => { closed = true; };
+  const app = start({ port: 0, store, core: { async call() { throw Error(); } }, transcriptSource: source });
+  try {
+    const response = fetch(`http://127.0.0.1:${app.server.port}/api/terminals/t1/conversation`, { headers: { Authorization: `Bearer ${device.token}` } });
+    await started;
+    await store.revoke(device.device.id);
+    release();
+    expect((await response).status).toBe(401);
+  } finally { release(); app.stop(); await rm(root, { recursive: true, force: true }); }
+  expect(closed).toBe(true);
+});

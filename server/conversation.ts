@@ -14,7 +14,7 @@ export type ConversationPage = {
   turns: { id: string; entries: { id: string; role: "user" | "assistant" | "tool"; text: string }[] }[];
   nextCursor: string | null;
 };
-export type TranscriptSource = (terminalId: string, before?: string) => Promise<ConversationPage>;
+export type TranscriptSource = ((terminalId: string, before?: string) => Promise<ConversationPage>) & { close?: () => void };
 type Source = { format: "messages" | "responses"; root: string; sessions?: string };
 type Machine = { ssh?: string; sources: Source[] };
 type Cursor = { terminal: string; binding: string; size: number; digest: string; before: number; generation: string };
@@ -28,7 +28,8 @@ const invalidCursor = () => new Failure(400, "invalid_cursor", "Invalid conversa
 // No paths, targets, process arguments or transcript details cross the HTTP boundary.
 export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE_TRANSCRIPTS_CONFIG || join(homedir(), ".config/herdr-phone/transcripts.json")): TranscriptSource {
   const secret = randomBytes(32), cache = new Map<string, Cached>();
-  let active = 0;
+  let active = 0, stopped = false;
+  const readers = new Set<() => void>();
   const sign = (payload: string) => createHmac("sha256", secret).update(payload).digest("base64url");
   function encode(cursor: Cursor) {
     const payload = Buffer.from(JSON.stringify(cursor)).toString("base64url");
@@ -63,6 +64,7 @@ export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE
     } catch { throw new Failure(503, "conversation_unavailable", "Saved conversation configuration is unavailable."); }
   }
   async function run(config: Machine, request: any): Promise<Result> {
+    if (stopped) throw new Failure(503, "conversation_unavailable", "Saved conversation reader is unavailable.");
     if (active >= 4) throw new Failure(429, "conversation_busy", "Saved conversation reader is busy. Try again.");
     active++;
     try {
@@ -76,10 +78,12 @@ export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE
         const chunks: Buffer[] = []; let bytes = 0, settled = false;
         const done = (error?: Error, result?: Result) => {
           if (settled) return;
-          settled = true; clearTimeout(timer);
+          settled = true; clearTimeout(timer); readers.delete(cancel);
           child.stdin.destroy(); child.stdout.destroy();
           if (error) { child.kill("SIGKILL"); reject(error); } else resolve(result!);
         };
+        const cancel = () => done(new Failure(503, "conversation_unavailable", "Saved conversation reader stopped."));
+        readers.add(cancel);
         const timer = setTimeout(() => done(new Failure(503, "conversation_timeout", "Saved conversation read timed out.")), 12000);
         child.on("error", () => done(new Failure(503, "conversation_unavailable", "Saved conversation reader is unavailable.")));
         child.stdin.on("error", () => {});
@@ -98,7 +102,7 @@ export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE
       });
     } finally { active--; }
   }
-  return async (terminalId, before) => {
+  const source: TranscriptSource = async (terminalId, before) => {
     const cursor = before === undefined ? undefined : decode(before, terminalId);
     const machineId = terminalId.includes("/") ? terminalId.split("/")[0] : "local";
     const config = await machine(machineId);
@@ -147,4 +151,6 @@ export function transcriptSource(core: RPC, configPath = process.env.HERDR_PHONE
     }
     return page;
   };
+  source.close = () => { stopped = true; for (const cancel of [...readers]) cancel(); cache.clear(); };
+  return source;
 }
