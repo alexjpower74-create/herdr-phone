@@ -824,3 +824,124 @@ test("socket reconnect after failed request preserves draft without resubmission
   await expect(input).toHaveValue("retain on reconnect");
   expect(sends).toBe(1);
 });
+
+test("ten long menu options scroll within choices while keybar and compose remain usable", async ({
+  page,
+}) => {
+  const { calls, sockets } = await setup(page);
+  await open(page);
+  const labels = [
+    "Default (recommended) — Best for everyday, complex tasks (set as default)",
+    "Model Two — For complex work and everyday tasks (set as default)",
+    "Model Three — For your toughest challenges (set as default)",
+    "Model Four — Most efficient for simpler tasks (set as default)",
+    "Model Five — Fastest for quick answers (set as default)",
+    "Model Six — Fastest for quick answers (set as default)",
+    "Model Seven — Efficient for routine tasks (set as default)",
+    "Model Eight — Best for everyday, complex tasks (set as default)",
+    "Model Nine — Most capable for your hardest and longest-running tasks (set as default)",
+    "Model Ten — Best for everyday, complex tasks (set as default)",
+  ];
+  const controls = page.locator(
+    ".keybar button, .terminal-input, .compose-send",
+  );
+  const hitControls = async () => {
+    expect(
+      await controls.evaluateAll((elements) =>
+        elements.every((element) => {
+          const rect = element.getBoundingClientRect();
+          return (
+            rect.top >= 0 &&
+            rect.bottom <= innerHeight &&
+            rect.height >= 44 &&
+            [3, rect.height / 2, rect.height - 3].every((y) => {
+              const hit = document.elementFromPoint(
+                rect.x + rect.width / 2,
+                rect.y + y,
+              );
+              return hit === element || (hit !== null && element.contains(hit));
+            })
+          );
+        }),
+      ),
+    ).toBe(true);
+  };
+  for (let selected = 0; selected < labels.length; selected++) {
+    const promptId = `large-menu-${selected}`;
+    sockets[0].send(
+      JSON.stringify({
+        type: "screen",
+        terminalId: "t1",
+        cols: 100,
+        rows: 30,
+        text: "Select setting. Enter sets the default for new sessions.",
+        screenId: promptId,
+        prompt: {
+          id: promptId,
+          kind: "menu",
+          options: labels.map((label, index) => ({
+            id: `option-${index}`,
+            label,
+            keys: Array(index).fill("down").concat("enter"),
+          })),
+        },
+      }),
+    );
+    const area = page.locator("#approvals");
+    const option = page.getByRole("button", {
+      name: labels[selected],
+      exact: true,
+    });
+    await expect(option).toBeVisible();
+    expect(
+      await area.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      ),
+    ).toBe(true);
+    await hitControls();
+    const bounds = await area.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.move(
+      bounds!.x + bounds!.width / 2,
+      bounds!.y + bounds!.height / 2,
+    );
+    // Drive the scroll container with real input; no scrollIntoView/scrollTop assignment.
+    await page.mouse.wheel(0, -2000);
+    const reachable = () =>
+      option.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const parent = element.parentElement!.getBoundingClientRect();
+        const y = rect.y + rect.height / 2;
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, y);
+        return (
+          y > parent.top &&
+          y < parent.bottom &&
+          (hit === element || (hit !== null && element.contains(hit)))
+        );
+      });
+    for (let step = 0; step < 12 && !(await reachable()); step++) {
+      await page.mouse.wheel(0, 80);
+      await page.waitForTimeout(40);
+    }
+    expect(await reachable()).toBe(true);
+    await hitControls();
+    if (selected === 0 || selected === labels.length - 1)
+      await capture(page, `large-menu-${selected}`);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= 390),
+    ).toBe(true);
+    await option.tap();
+    await expect
+      .poll(() => calls.filter((call) => call.path.endsWith("/prompt")).length)
+      .toBe(selected + 1);
+    expect(
+      calls.filter((call) => call.path.endsWith("/prompt"))[selected].body,
+    ).toEqual({
+      promptId,
+      optionId: `option-${selected}`,
+    });
+  }
+  expect(calls.filter((call) => call.path.endsWith("/prompt"))).toHaveLength(
+    10,
+  );
+});

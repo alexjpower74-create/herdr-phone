@@ -311,9 +311,14 @@ h2 {
 .approvals {
   display: flex;
   flex-wrap: wrap;
+  align-content: flex-start;
   gap: 6px;
   padding: 0 10px;
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(35dvh, 280px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .approvals:not(:empty) {
   padding-top: 8px;
