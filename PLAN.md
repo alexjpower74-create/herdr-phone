@@ -20,7 +20,7 @@ Keep it simple but effective. Reference: `home-reference.png` (the Herdr app's S
 1. **Home is the Herdr Spaces sidebar.** It has the "Spaces" header, then groups for "This computer" and "mac", each with its online dot. Every space has its coloured letter tile, its name, and a subtitle with the repo and branch. Herdr's own colours, fonts and spacing.
 2. **The + buttons work.** The + next to a machine opens a new space on that machine. The + at the top opens a new space too.
 3. **Tap a space and its first tab opens,** with the other tabs across the top. Tap a tab to switch.
-4. **The tab is the live terminal,** and tapping it brings up the keyboard. Whatever you type goes to that agent (e.g. Onyx in the Onyx space).
+4. **The tab is the live terminal,** and tapping it brings up the keyboard. Whatever you type goes to the agent in that tab.
 5. **Key bar** above the keyboard:
    - **Shift+Tab**, to cycle modes
    - **Esc**
@@ -32,7 +32,7 @@ Keep it simple but effective. Reference: `home-reference.png` (the Herdr app's S
 8. **Pairing by code, and lock-screen notifications** when an agent needs you or finishes.
 
 ## Later (not v1)
-- A chat view: Claude Code and Codex conversations as messages instead of the terminal.
+- A chat view: an agent's conversation as messages instead of the terminal.
 - Rename an agent, and jump to it on the desktop.
 - Your Herdr mods on the phone, a files and changes view, and an iPad layout.
 
@@ -41,15 +41,14 @@ Keep it simple but effective. Reference: `home-reference.png` (the Herdr app's S
 |---|---|---|
 | 0. Look | Settled: the Herdr Spaces sidebar (`home-reference.png`). | Done 2026-10-31. |
 | 1. Bridge | Talks to `hc connect`, lists agents on both machines, pairing, tokens, `tailscale serve`. | It lists your real agents on the PC and Mac. |
-| 2. Core screens | Home (spec 1–2), space with tabs and the live terminal (3–4), key bar (5), Yes/No buttons (6), slash menus (7). | You talk to Onyx from the phone, approve something, and change /model. |
+| 2. Core screens | Home (spec 1–2), space with tabs and the live terminal (3–4), key bar (5), Yes/No buttons (6), slash menus (7). | You talk to an agent from the phone, approve something, and change /model. |
 | 3. Push | Lock-screen notifications. | A blocked agent pings your phone and you answer it in two taps. |
 | 4. Polish + swap | Herdr look pass and real-phone QA, then Collie is removed. | You say it feels like Herdr. |
 
-## Who does what
-- **Cobalt** builds it (Codex, in its own Herdr tab and git worktree).
-- **Onyx** owns this plan, reviews each phase as it lands, runs QA and shows you the result.
-- QA uses Playwright with Safari's engine (WebKit) at iPhone size, real taps and swipes, and screenshots. The final check is on your actual phone.
-- Private GitHub repo, with no AI credits.
+## How it's checked
+- Each phase is reviewed as it lands.
+- Playwright with Safari's engine (WebKit) at iPhone size, real taps and swipes, and screenshots.
+- The final check is on a real iPhone.
 
 ## Rules
 - It runs at a new address next to Collie until you OK the swap, so nothing you have now breaks.
