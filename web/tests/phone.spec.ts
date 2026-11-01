@@ -107,9 +107,18 @@ async function setup(page: Page, paired = true, path = "/") {
   }, paired);
   await page.routeWebSocket("**/api/ws", (ws) => {
     sockets.push(ws);
+    let watchId = "";
+    const send = ws.send.bind(ws);
+    ws.send = (raw) => {
+      if (typeof raw !== "string") return send(raw);
+      const frame = JSON.parse(raw);
+      if (frame.type === "screen" && !frame.watchId) frame.watchId = watchId;
+      send(JSON.stringify(frame));
+    };
     ws.onMessage((raw) => {
       const msg = JSON.parse(String(raw));
-      if (msg.type === "watch")
+      if (msg.type === "watch") {
+        watchId = msg.watchId;
         ws.send(
           JSON.stringify({
             type: "screen",
@@ -121,6 +130,7 @@ async function setup(page: Page, paired = true, path = "/") {
             prompt: msg.terminalId === "t1" ? suppliedPrompt : null,
           }),
         );
+      }
     });
     ws.send(JSON.stringify({ type: "state", state: fixture }));
   });

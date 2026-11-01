@@ -5,7 +5,9 @@ import "@fontsource/geist/500.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "./style.css";
 import { ApiError, Client } from "./client";
-import { patchReadable, readableLines } from "./readable";
+import { readableLines, type ReadLine } from "./readable";
+import { ReadWindow } from "./read-window";
+import { ObserverDisplay, bufferText, terminalOptions, type BufferAnchor } from "./observer";
 import { notificationSettings } from "./notifications";
 import type { State, Space, Tab, TerminalInfo, Frame, Prompt } from "./types";
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -16,7 +18,6 @@ let state: State | undefined,
   active: TerminalInfo | undefined;
 let emulator: Terminal | undefined,
   resize: ResizeObserver | undefined,
-  decoder = new TextDecoder(),
   connected = false;
 let currentText = "",
   currentPrompt: Prompt | null = null,
@@ -25,6 +26,78 @@ let currentText = "",
 let appEpoch = 0;
 let paintFrame = 0;
 let mirrorSource: string | undefined;
+let fallbackFullPatches = 0, fallbackRowPatches = 0;
+let readLines: ReadLine[] = [];
+const readWindow = new ReadWindow();
+let historyBudget = 500, historyBusy = false, historyStopped = false;
+let observerLabel = "Plain screen · connecting colour and history…";
+let mirrorFollowing = true, mirrorPosition = 0;
+const observation = new ObserverDisplay(
+  () => emulator,
+  (next, host, anchor, index = 0) => {
+    const old = emulator;
+    const oldLength = old?.buffer.active.length ?? 0;
+    old?.element?.parentElement?.remove();
+    old?.dispose();
+    emulator = next;
+    host.className = "terminal-canvas";
+    host.hidden = terminalView === "read";
+    observerLabel = next.buffer.active.type === "alternate"
+      ? "Live colours · alternate screen has no retained history" : "Live colours · retained history";
+    historyStopped = next.buffer.active.type === "alternate" ||
+      (historyBusy && next.buffer.active.length <= oldLength) || historyBudget >= 100000;
+    historyBusy = false;
+    if (historyStopped && next.buffer.active.type !== "alternate")
+      observerLabel += " · history limit reached";
+    currentText = bufferText(next);
+    readSource = undefined;
+    scaleTerminal();
+    if (anchor) {
+      if (anchor.view === "mirror") {
+        mirrorFollowing = false;
+        mirrorPosition = index * mirrorRowHeight() + anchor.offset;
+        const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
+        if (viewport && terminalView === "mirror") viewport.scrollTop = mirrorPosition;
+      } else {
+        followingNewest = false;
+        paintReadable(false);
+        if (readLines.length > 1000) {
+          const lineIndex = readLines.findIndex(line => line.kind === "text" && line.text === anchor.text);
+          readPosition = readWindow.offset(lineIndex) - anchor.offset;
+          paintReadable(false, true);
+        }
+        const rows = [...root.querySelectorAll<HTMLElement>(".read-line")];
+        const row = rows.find(row => row.textContent === anchor.text);
+        const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
+        if (row && viewport) viewport.scrollTop = row.offsetTop - anchor.offset;
+        else notice("History loaded, but the readable position could not be restored.");
+        readPosition = viewport?.scrollTop ?? 0;
+      }
+    } else if (mirrorFollowing) scrollMirrorNewest();
+    scheduleObserverPaint();
+  },
+  () => scheduleObserverPaint(),
+  message => { historyBusy = false; observerLabel = message; updateTerminalInfo(); },
+);
+client.onWatch = (id, history) => {
+  if (!active) return;
+  observation.watch(id, history, pendingAnchor);
+  pendingAnchor = undefined;
+};
+let pendingAnchor: BufferAnchor | undefined;
+function scheduleObserverPaint() {
+  if (paintFrame) return;
+  paintFrame = requestAnimationFrame(() => {
+    paintFrame = 0;
+    if (!emulator || !observation.active) return;
+    currentText = bufferText(emulator);
+    active && (active.cols = emulator.cols, active.rows = emulator.rows);
+    paintReadable();
+    scaleTerminal();
+    if (mirrorFollowing) scrollMirrorNewest();
+    updateTerminalInfo();
+  });
+}
 type TerminalView = "read" | "mirror";
 const VIEW_KEY = "herdr-phone.terminal-view";
 function preferredTerminalView(): TerminalView {
@@ -82,9 +155,11 @@ function notice(message: string) {
 }
 function disposeTerminal() {
   screenGeneration++;
+  observation.dispose();
   cancelAnimationFrame(paintFrame);
   paintFrame = 0;
   mirrorSource = undefined;
+  readWindow.clear();
   resize?.disconnect();
   emulator?.dispose();
   emulator = undefined;
@@ -320,6 +395,13 @@ function showTerminal(desired?: string) {
     return;
   }
   followingNewest = true;
+  mirrorFollowing = true;
+  mirrorPosition = 0;
+  historyBudget = 500;
+  historyBusy = historyStopped = false;
+  pendingAnchor = undefined;
+  observerLabel = active.state === "finished" ? "Plain screen · finished terminal, no colour or history stream" :
+    "Plain screen · connecting colour and history…";
   readPosition = 0;
   readSource = undefined;
   currentText = "";
@@ -334,7 +416,12 @@ function showTerminal(desired?: string) {
   const read = element("div", "terminal-read");
   read.setAttribute("aria-label", "Readable terminal text");
   viewport.append(canvas, read);
-  viewport.addEventListener("scroll", () => captureReadPosition(viewport), {
+  viewport.addEventListener("scroll", () => {
+    captureReadPosition(viewport);
+    if (terminalView === "read" && readLines.length > 1000) paintReadable(false, true);
+    if (terminalView === "mirror") syncMirrorScroll(viewport);
+    if (viewport.scrollTop < 2) requestHistory();
+  }, {
     passive: true,
   });
   root.append(viewport);
@@ -393,18 +480,7 @@ function showTerminal(desired?: string) {
   compose.append(input, submit);
   dock.append(keys, compose);
   root.append(dock);
-  emulator = new Terminal({
-    cols: active.cols,
-    rows: active.rows,
-    fontFamily: "JetBrains Mono",
-    fontSize: 14,
-    lineHeight: 1.15,
-    scrollback: 0,
-    screenReaderMode: true,
-    disableStdin: true,
-    theme: { background: "#101114", foreground: "#d8d8df", cursor: "#d8d8df" },
-    allowProposedApi: false,
-  });
+  emulator = new Terminal({ ...terminalOptions, cols: active.cols, rows: active.rows });
   emulator.open(canvas);
   viewport.onclick = () => input.focus();
   resize = new ResizeObserver(() => {
@@ -418,13 +494,12 @@ function showTerminal(desired?: string) {
     }
   });
   resize.observe(viewport);
-  resize.observe(read);
+
   setTerminalView(terminalView);
   updateCompose();
   currentText = "";
   currentPrompt = null;
   usedPrompt = "";
-  decoder = new TextDecoder();
   const id = active.id,
     generation = screenGeneration;
   client.watch(id);
@@ -471,9 +546,11 @@ function setTerminalView(view: TerminalView, remember = false) {
     viewport.scrollTop = followingNewest ? viewport.scrollHeight : readPosition;
     readPosition = viewport.scrollTop;
   } else {
-    viewport.scrollTop = 0;
+    viewport.scrollTop = mirrorFollowing ? viewport.scrollHeight : mirrorPosition;
     emulator?.refresh(0, emulator.rows - 1);
     scaleTerminal();
+    if (mirrorFollowing) scrollMirrorNewest();
+    else syncMirrorScroll(viewport);
   }
 }
 function captureReadPosition(viewport: HTMLElement) {
@@ -486,30 +563,32 @@ function captureReadPosition(viewport: HTMLElement) {
     followingNewest = true;
   readPosition = position;
 }
-function paintReadable(capturePosition = true) {
+function paintReadable(capturePosition = true, scrollOnly = false) {
   const read = root.querySelector<HTMLElement>(".terminal-read"),
     viewport = root.querySelector<HTMLElement>(".terminal-viewport");
   if (
     !read ||
     !viewport ||
     terminalView !== "read" ||
-    readSource === currentText
+    (readSource === currentText && !scrollOnly)
   )
     return;
+  if (readSource !== currentText) readLines = readableLines(currentText);
   readSource = currentText;
   // Native scrolling can advance before its scroll event is delivered. Read
   // the live position immediately before replacing content, not from its last
   // callback or before building the next frame.
   if (capturePosition) captureReadPosition(viewport);
   const position = readPosition;
-  patchReadable(read, readableLines(currentText));
-  viewport.scrollTop = followingNewest ? viewport.scrollHeight : position;
+  readWindow.render(read, readLines, followingNewest ? Number.MAX_SAFE_INTEGER : position, viewport.clientHeight);
+  const nextTop = followingNewest ? viewport.scrollHeight : position;
+  if (!scrollOnly || Math.abs(viewport.scrollTop - nextTop) > 1) viewport.scrollTop = nextTop;
   readPosition = viewport.scrollTop;
 }
 function updateTerminalInfo() {
   const info = document.querySelector("#terminal-info");
   if (info && active)
-    info.textContent = `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"}`;
+    info.textContent = `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"} · ${observerLabel}`;
 }
 function scaleTerminal() {
   if (terminalView !== "mirror") return;
@@ -526,7 +605,7 @@ function scaleTerminal() {
     canvas.style.height = `${emulator.element?.offsetHeight ?? 0}px`;
     viewport.style.setProperty(
       "--terminal-height",
-      `${(emulator.element?.offsetHeight ?? 0) * scale}px`,
+      `${observation.active ? emulator.buffer.active.length * mirrorRowHeight() : (emulator.element?.offsetHeight ?? 0) * scale}px`,
     );
   }
 }
@@ -555,6 +634,7 @@ function paint(
   prompt: Prompt | null = null,
 ) {
   currentPrompt = prompt;
+  if (observation.active) { renderChoices(); return; }
   dimensions(cols, rows);
   if (!emulator) return;
   currentText = text;
@@ -563,17 +643,22 @@ function paint(
   paintFrame = requestAnimationFrame(() => {
     paintFrame = 0;
     paintReadable();
-    if (!emulator || mirrorSource === currentText) return;
+    if (!emulator || observation.active || mirrorSource === currentText) return;
     const target = emulator;
     const previous = mirrorSource?.split("\n") ?? [];
     const plain = currentText.replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/g, "");
     const lines = plain.split("\n");
-    let patch = "";
+    let patch = "\x1b[?7l";
+    let changedRows = 0;
     for (let i = 0; i < Math.min(target.rows, Math.max(lines.length, previous.length)); i++)
-      if (previous[i] !== lines[i])
+      if (previous[i] !== lines[i]) {
+        changedRows++;
         patch += `\x1b[${i + 1};1H\x1b[2K${lines[i] ?? ""}`;
+      }
+    fallbackRowPatches += changedRows;
+    if (changedRows >= target.rows) fallbackFullPatches++;
     mirrorSource = plain;
-    if (patch) target.write(patch, () => {
+    if (patch.length > 5) target.write(patch, () => {
       if (emulator === target) scaleTerminal();
     });
   });
@@ -776,37 +861,14 @@ function frame(message: Frame) {
     emulator
   ) {
     screenGeneration++;
-    dimensions(message.cols, message.rows);
-    const target = emulator,
-      id = active.id,
-      generation = screenGeneration;
-    if (message.reset) {
-      target.reset();
-      decoder = new TextDecoder();
-    }
-    try {
-      const bytes = Uint8Array.from(atob(message.data), (c) => c.charCodeAt(0));
-      target.write(decoder.decode(bytes, { stream: true }), () => {
-        if (
-          emulator !== target ||
-          active?.id !== id ||
-          generation !== screenGeneration
-        )
-          return;
-        currentText = Array.from(
-          { length: target.rows },
-          (_, i) =>
-            target.buffer.active.getLine(i)?.translateToString(true) ?? "",
-        ).join("\n");
-        paintReadable();
-        scaleTerminal();
-        renderChoices();
-      });
-    } catch {
-      notice("Unable to display terminal output. Reopen this tab.");
-    }
+    observation.output(message);
   }
-  if (message.type === "error") notice(message.message);
+  if (message.type === "error") {
+    if (message.watchId && message.watchId !== observation.watchId) return;
+    if (message.terminalId && message.terminalId !== active?.id) return;
+    if (message.code === "observer_unavailable") observation.unavailable();
+    else notice(message.message);
+  }
 }
 function modal(title: string) {
   const dialog = element("dialog");
@@ -979,3 +1041,75 @@ if ("serviceWorker" in navigator)
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 if (client.token) void start();
 else pairing();
+
+function mirrorRowHeight() {
+  const screen = emulator?.element?.querySelector<HTMLElement>(".xterm-screen");
+  const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
+  if (!screen || !viewport || !emulator) return 1;
+  const scale = Math.min(1, (viewport.clientWidth - 24) / screen.offsetWidth);
+  return screen.offsetHeight / emulator.rows * scale;
+}
+function syncMirrorScroll(viewport: HTMLElement) {
+  if (!emulator || !observation.active) return;
+  const remaining = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+  if (viewport.scrollTop < mirrorPosition - 1) mirrorFollowing = false;
+  else if (remaining < 2) mirrorFollowing = true;
+  mirrorPosition = viewport.scrollTop;
+  const line = Math.min(emulator.buffer.active.baseY, Math.floor((mirrorPosition + 0.5) / mirrorRowHeight()));
+  emulator.scrollToLine(line);
+  const canvas = emulator.element?.parentElement;
+  if (canvas) canvas.style.top = `${line * mirrorRowHeight()}px`;
+}
+function scrollMirrorNewest() {
+  if (terminalView !== "mirror") return;
+  const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
+  if (!viewport) return;
+  viewport.scrollTop = viewport.scrollHeight;
+  syncMirrorScroll(viewport);
+}
+function requestHistory() {
+  if (!active || !observation.active || historyBusy || historyStopped || !emulator) return;
+  const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
+  if (!viewport) return;
+  let anchor: BufferAnchor | undefined;
+  if (terminalView === "mirror") {
+    const index = Math.min(emulator.buffer.active.baseY, Math.floor((viewport.scrollTop + 0.5) / mirrorRowHeight()));
+    const text = emulator.buffer.active.getLine(index)?.translateToString(true) ?? "";
+    anchor = { text, index, offset: viewport.scrollTop - index * mirrorRowHeight(), view: "mirror" };
+    mirrorFollowing = false;
+  } else {
+    const top = viewport.getBoundingClientRect().top;
+    const row = [...root.querySelectorAll<HTMLElement>(".read-line")].find(row => row.getBoundingClientRect().bottom > top);
+    if (!row) return;
+    const text = row.textContent ?? "";
+    const index = currentText.split("\n").findIndex(line => line.trimEnd() === text);
+    anchor = { text, index, offset: row.getBoundingClientRect().top - top, view: "read" };
+    followingNewest = false;
+  }
+  pendingAnchor = anchor;
+  historyBusy = true;
+  historyBudget = Math.min(100000, historyBudget + 500);
+  observerLabel = "Loading earlier history…";
+  updateTerminalInfo();
+  client.watch(active.id, historyBudget);
+}
+
+// Browser integration imports this module under Vite. Production exposes no
+// inspection object, terminal reference, or input operation.
+export const inspectTerminal = import.meta.env.DEV ? (includeCells = true) => {
+  if (!emulator || !active) return null;
+  const buffer = emulator.buffer.active;
+  const rows = Array.from({ length: buffer.length }, (_, i) => {
+    const line = buffer.getLine(i);
+    return {
+      text: line?.translateToString(true) ?? "",
+      cells: includeCells ? Array.from({ length: line?.length ?? 0 }, (_, j) => {
+        const cell = line!.getCell(j)!;
+        return { text: cell.getChars(), bg: cell.getBgColor(), bgMode: cell.getBgColorMode(), fg: cell.getFgColor(), fgMode: cell.getFgColorMode() };
+      }) : [],
+    };
+  });
+  return { terminalId: active.id, size: { cols: emulator.cols, rows: emulator.rows }, type: buffer.type, baseY: buffer.baseY, viewportY: buffer.viewportY,
+    rows, resets: observation.resets, fullPatches: fallbackFullPatches, rowPatches: fallbackRowPatches, watchId: observation.watchId,
+    history: historyBudget, historyBusy, historyStopped, observer: observation.active, followingNewest, readPosition, mirrorPosition, rowHeight: mirrorRowHeight() };
+} : undefined;

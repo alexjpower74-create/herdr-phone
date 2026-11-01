@@ -41,6 +41,7 @@ export type Frame =
   | {
       type: "screen";
       terminalId: string;
+      watchId: string;
       cols: number;
       rows: number;
       text: string;
@@ -50,10 +51,13 @@ export type Frame =
   | {
       type: "output";
       terminalId: string;
+      watchId: string;
       cols: number;
       rows: number;
       reset: boolean;
+      seq: number;
+      history: number;
       data: string;
     }
   | { type: "connection"; connected: boolean }
-  | { type: "error"; code: string; message: string; terminalId?: string };
+  | { type: "error"; code: string; message: string; terminalId?: string; watchId?: string };

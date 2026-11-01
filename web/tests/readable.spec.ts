@@ -69,6 +69,7 @@ const wideScreen = [
 
 async function setup(page: Page) {
   let text = wideScreen;
+  let watchId = "";
   const sockets: WebSocketRoute[] = [];
   const writes: { path: string; body: unknown }[] = [];
   await page.addInitScript(() =>
@@ -78,6 +79,7 @@ async function setup(page: Page) {
     JSON.stringify({
       type: "screen",
       terminalId: "t1",
+      watchId,
       cols: 200,
       rows: 120,
       text,
@@ -87,7 +89,8 @@ async function setup(page: Page) {
   await page.routeWebSocket("**/api/ws", (ws) => {
     sockets.push(ws);
     ws.onMessage((raw) => {
-      if (JSON.parse(String(raw)).type === "watch") ws.send(frame());
+      const request = JSON.parse(String(raw));
+      if (request.type === "watch") { watchId = request.watchId; ws.send(frame()); }
     });
     ws.send(JSON.stringify({ type: "state", state }));
   });
@@ -325,7 +328,7 @@ test.describe("screen scrolling", () => {
         )
           probe.paintedTop = el.scrollTop;
       });
-      observer.observe(read, { childList: true });
+      observer.observe(read, { childList: true, subtree: true, characterData: true });
       document.addEventListener("scroll", hold, true);
       (window as any).scrollProbe = probe;
       (window as any).releaseScrollProbe = () => {
