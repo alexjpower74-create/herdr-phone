@@ -8,6 +8,8 @@
   --muted: #70737b;
   --line: #27282e;
   --raised: #252529;
+  --app-safe-top: env(safe-area-inset-top);
+  --app-safe-bottom: env(safe-area-inset-bottom);
 }
 * {
   box-sizing: border-box;
@@ -18,19 +20,29 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 body {
-  padding: env(safe-area-inset-top) env(safe-area-inset-right)
-    env(safe-area-inset-bottom) env(safe-area-inset-left);
+  position: fixed;
+  inset: 0;
 }
 #app {
-  height: 100%;
-  height: 100dvh;
-  max-height: 100%;
+  position: fixed;
+  top: var(--app-top, 0px);
+  left: 0;
+  right: 0;
+  height: var(--app-height, 100dvh);
+  padding: var(--app-safe-top) env(safe-area-inset-right)
+    var(--app-safe-bottom) env(safe-area-inset-left);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+#app[data-keyboard-open="true"] { padding-bottom: 0; }
+#app[data-keyboard-open="true"] .terminal-info { display: none; }
+#app[data-keyboard-open="true"] .terminal-input,
+#app[data-keyboard-open="true"] .attach-files,
+#app[data-keyboard-open="true"] .compose-send { min-height: 46px; }
 button,
 input,
 textarea,
@@ -268,8 +280,8 @@ h2 {
   flex: none;
 }
 .terminal-viewport {
-  flex: 1;
-  min-height: 80px;
+  flex: 1 1 80px;
+  min-height: 0;
   position: relative;
   overflow: auto;
   overflow-x: hidden;
@@ -565,8 +577,8 @@ dialog::backdrop {
 }
 .conversation-toggle[aria-pressed="true"] { background: #303b4d; color: #fff; }
 .conversation {
-  flex: 1;
-  min-height: 80px;
+  flex: 1 1 80px;
+  min-height: 0;
   overflow: auto;
   overflow-x: hidden;
   overflow-anchor: none;

@@ -5,6 +5,7 @@ import "@fontsource/geist/500.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "./style.css";
 import { terminalFontReady, remeasureTerminalFont } from "./terminal-font";
+import { trackViewport } from "./viewport";
 import { draft, selectFiles, preview, removeFile, clearDraft, releasePreviews, forgetDrafts, type SelectedFile } from "./attachments";
 import { Conversation } from "./conversation";
 import { ApiError, Client } from "./client";
@@ -14,6 +15,8 @@ import { ObserverDisplay, bufferText, terminalOptions, type BufferAnchor } from 
 import { notificationSettings } from "./notifications";
 import type { State, Space, Tab, TerminalInfo, Frame, Prompt } from "./types";
 const root = document.querySelector<HTMLDivElement>("#app")!;
+const releaseViewport = trackViewport(root);
+import.meta.hot?.dispose(releaseViewport);
 const client = new Client();
 let state: State | undefined,
   space: Space | undefined,
