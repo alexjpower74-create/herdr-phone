@@ -435,7 +435,7 @@ function showTerminal(desired?: string) {
     passive: true,
   });
   root.append(viewport);
-  conversation = new Conversation(client, active.id);
+  conversation = new Conversation(client, active.id, connected);
   root.append(conversation.host);
   const approvals = element("div", "approvals");
   approvals.id = "approvals";
