@@ -116,8 +116,11 @@ is read through the current core and cached for at most 30 seconds.
 "<screen>", "complete": true, "screenId": "<digest>", "prompt": Prompt | null }`.
 The digest binds the terminal, current screen and reported status/turn.
 Encode the entire id with
-`encodeURIComponent`, including its remote slash. Read with history zero;
-never scroll a live application to obtain history.
+`encodeURIComponent`, including its remote slash. This endpoint and prompt
+detection always use history zero. It is a current-screen fallback and prompt
+source, not the Mirror stream. Never scroll a live application to obtain history.
+In particular, nonzero `terminal.read` can scroll alternate-screen applications
+in the installed core; the bridge must not use that path for pagination.
 
 `POST /api/terminals/:id/keys`, body `{ "keys": ["shift+tab"] }`, returns
 `{ "ok": true }` after core acknowledgement. Supported bar names are
@@ -204,15 +207,65 @@ All messages are JSON. Server sends `{ "type": "state", "state": State }`
 initially and after layout/status changes. A missed core event or reconnect
 causes a fresh full snapshot, not partial state presented as current.
 
-Client: `{ "type": "watch", "terminalId": "t1" }` subscribes to one
-terminal, releasing any previous stream. `{ "type": "unwatch" }` releases it.
-Server: `{ "type": "screen", "terminalId", "cols", "rows", "text", "screenId", "prompt" }`
-is a complete plain-text replacement. When safe observer streams are available,
-server instead sends `{ "type": "output", "terminalId", "cols", "rows",
-"reset": true, "data": "<base64 ANSI bytes>" }` followed by messages with
-`reset: false`. Reset the emulator before the first paint; use a streaming
-UTF-8 decoder for split byte sequences. Never apply output for an old tab.
-Terminal size changes update only the phone emulator.
+Client: `{ "type": "watch", "terminalId": "t1", "watchId": "<request-id>",
+"history": 500 }` subscribes to one terminal, releasing any previous stream.
+`watchId` is a fresh 1–64 character ASCII identifier for each watch/reconnect
+or history request. `history` defaults to 500, is an integer from 0 to 100000,
+and means retained rows preceding the current screen. Legacy watches without
+a watchId remain accepted; new clients always supply one. `{ "type": "unwatch" }`
+releases the channel. Client input remains exclusively on the HTTP routes.
+
+Mirror uses `terminal.attach` with `observe: true`, current desktop dimensions,
+and the requested history. The bridge may send only CREDIT and CLOSE on its
+observation channels: never DATA, RESIZE, FOCUS or display FACTS. The raw stream
+is the source of colours and terminal modes; it is never reconstructed from
+plain screen text. First data for each observer is:
+
+```ts
+{
+  type: "output";
+  terminalId: string;
+  watchId: string;
+  cols: number;
+  rows: number;
+  reset: boolean; // true only on the first chunk of this observation
+  history: number; // requested history budget
+  seq: number; // starts at 0, increases for every chunk
+  data: string; // base64 raw ANSI bytes, in core order
+}
+```
+
+A reset starts a fresh emulator buffer; subsequent chunks append without resets
+or full-screen replacement. Use a streaming UTF-8 decoder and discard any frame
+for a superseded terminal/watch. Never replay a chunk twice. Desktop size changes
+update only the phone emulator. Raw byte chunks are bounded; flow control uses
+CREDIT after bounded delivery, and slow consumers are closed instead of growing
+an unbounded queue. Revocation, unwatch, socket close and observer failure release
+the owned channel/process. Reconnection establishes a fresh observer, not a
+continuation of an incomplete old byte stream.
+
+`{ "type": "screen", "terminalId", "watchId", "cols", "rows", "text",
+"screenId", "prompt" }` still supplies current plain text and bridge-detected
+choices. Identical screen frames are skipped. Once observer output is available,
+a plain screen must never reset or overwrite the Mirror emulator. If observation
+is unavailable (including a finished terminal), retain a labelled plain-screen
+fallback; do not claim colours or history that were not received.
+
+The first watch requests about 500 history rows. Reaching the top requests a new
+watch with 500 more, retaining the phone's visible text anchor while the larger
+observer snapshot arrives. Replacement snapshots already include the old rows:
+replace that snapshot atomically instead of concatenating it and duplicating
+history. Both Mirror and Read expose the retained history, append new output,
+and pause following when the person scrolls up. Stop paging when retained history
+is exhausted, the alternate screen has no retained history, or the bound is
+reached; show that limit honestly. There is no application-scrolling fallback.
+A full-screen program may keep older conversation text privately, beyond what
+its terminal buffer exposes.
+
+Read derives plain text from the received emulator buffer, including retained
+history. Patch changed lines, preserve unchanged nodes and scroll anchors, skip
+identical content, and batch updates to one browser animation frame. The plain
+screen fallback follows the same incremental rendering rules.
 
 `{ "type": "error", "code", "message", "terminalId"? }` reports recoverable
 errors. `{ "type": "connection", "connected": false }` marks stale state
