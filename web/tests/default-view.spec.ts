@@ -5,7 +5,7 @@ const state = { version: 1, revision: 1, machines: [{ id: "local", name: "Comput
 const turn = (n: number) => ({ id: `turn-${n}`, entries: [{ id: `user-${n}`, role: "user", text: `Request ${n}: Review this saved message.` }, { id: `reply-${n}`, role: "assistant", text: `Reply ${n}: The saved response remains readable.\n${"The next step is ready. ".repeat(6)}` }] });
 
 async function setup(page: Page, preference: string | null = null, deepLink = false, blockedStorage = false) {
-  const model = { data: Array.from({ length: 20 }, (_, i) => turn(i)), reads: [] as string[], calls: [] as { path: string; body: any }[], watches: new Map<WebSocketRoute, { terminalId: string; watchId: string }>() };
+  const model = { data: Array.from({ length: 20 }, (_, i) => turn(i)), holdLatest: false, reads: [] as string[], calls: [] as { path: string; body: any }[], watches: new Map<WebSocketRoute, { terminalId: string; watchId: string }>() };
   let prompt: any = { id: "approval", kind: "approval", options: [{ id: "yes", label: "Yes, proceed", keys: ["enter"] }, { id: "no", label: "No, cancel", keys: ["down", "enter"] }] };
   await page.addInitScript(({ preference, blockedStorage }) => {
     localStorage.setItem("herdr-phone.device", "test-device-token");
@@ -32,6 +32,7 @@ async function setup(page: Page, preference: string | null = null, deepLink = fa
     if (path.endsWith("/screen")) return route.fulfill({ json: screen(decodeURIComponent(path.split("/")[3])) });
     if (path.endsWith("/conversation")) {
       model.reads.push(path);
+      if (model.holdLatest) return;
       return route.fulfill({ json: { available: true, session: path, revision: String(model.data.length), turns: model.data, nextCursor: null } });
     }
     if (route.request().method() === "POST") model.calls.push({ path, body: route.request().postDataJSON() });
@@ -127,7 +128,10 @@ test("Conversation follows layout changes but preserves native scroll-up before 
   await expect.poll(() => model.watches.size).toBe(1);
   const host = page.locator(".conversation");
   const gap = () => host.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight);
+  await page.evaluate(() => document.fonts.ready);
   await expect.poll(gap).toBeLessThan(2);
+  // Keep later polls pending: they must not rescue a missing resize handler.
+  model.holdLatest = true;
   publishPrompt({ id: "many", kind: "menu", options: Array.from({ length: 10 }, (_, i) => ({ id: `choice-${i}`, label: `Setting ${i}: keep this choice for future sessions`, keys: ["enter"] })) });
   await expect(page.locator("#approvals button")).toHaveCount(10);
   await expect.poll(gap).toBeLessThan(2);
