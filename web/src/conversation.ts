@@ -5,6 +5,7 @@ import type { ConversationPage } from "./types";
 export class Conversation {
   readonly host = document.createElement("section");
   private status = document.createElement("p");
+  private notices = document.createElement("div");
   private older = document.createElement("button");
   private retry = document.createElement("button");
   private list = document.createElement("div");
@@ -38,7 +39,8 @@ export class Conversation {
     this.latest.className = "conversation-latest";
     this.latest.hidden = true;
     this.latest.onclick = () => { this.following = true; this.restorePosition(); };
-    this.host.append(this.status, this.retry, this.older, this.list, this.latest);
+    this.notices.role = "status";
+    this.host.append(this.status, this.notices, this.retry, this.older, this.list, this.latest);
     this.host.addEventListener("scroll", () => {
       this.capturePosition();
       this.latest.hidden = this.following;
@@ -120,7 +122,14 @@ export class Conversation {
         this.cancel();
         this.list.replaceChildren(); this.nodes.clear(); this.initialized = false;
         this.session = null; this.cursor = null; this.older.hidden = true;
-        this.failure(page.reason === "offline" ? "Conversation is offline. Reconnect and retry." : "Saved conversation is unavailable for this terminal.");
+        this.notices.replaceChildren();
+        const reasons = {
+          not_found: "No saved conversation was found for this terminal.",
+          not_configured: "Saved conversation is not configured for this machine.",
+          ambiguous: "More than one saved conversation matches this terminal.",
+          offline: "The conversation machine is offline. Reconnect it and retry.",
+        };
+        this.failure(page.reason ? reasons[page.reason] : "Saved conversation is unavailable for this terminal.");
         return;
       }
       const reset = !this.initialized || page.session !== this.session ||
@@ -158,9 +167,20 @@ export class Conversation {
       }
       if (older) this.list.prepend(fragment); else this.list.append(fragment);
       if (reset || older) this.cursor = page.nextCursor;
+      this.notices.replaceChildren();
+      for (const warning of new Set(page.warnings ?? [])) {
+        const message = warning === "long_output_trimmed" ? "[long output trimmed]" :
+          warning === "scan_limited" ? "Older messages remain beyond this read window." : null;
+        if (message) {
+          const notice = document.createElement("p");
+          notice.className = "conversation-status";
+          notice.textContent = message;
+          this.notices.append(notice);
+        }
+      }
       this.initialized = true;
       this.status.textContent = this.cursor ? "Saved conversation" : "Beginning of conversation";
-      if (!page.turns.length && !this.nodes.size) this.status.textContent = "No saved messages yet.";
+      if (!this.cursor && !page.turns.length && !this.nodes.size) this.status.textContent = "No saved messages yet.";
       this.retry.hidden = true;
       this.older.hidden = !this.cursor;
       this.following = follow;
@@ -170,7 +190,17 @@ export class Conversation {
       if (epoch !== this.epoch || controller.signal.aborted) return;
       if (error instanceof ApiError && error.code === "conversation_changed") {
         this.cancel(); this.initialized = false; void this.load();
-      } else this.failure("Could not load saved conversation. Retry when connected.");
+      } else {
+        const failures: Record<string, string> = {
+          conversation_too_large: "This conversation page is too large to display.",
+          conversation_busy: "Conversation readers are busy. Please retry shortly.",
+          conversation_timeout: "Loading saved conversation timed out. Please retry.",
+          conversation_unavailable: "The saved conversation reader is unavailable. Please retry.",
+        };
+        this.failure(error instanceof ApiError ? failures[error.code] ?? "Could not load saved conversation. Please retry." :
+          error instanceof TypeError ? "Could not reach the bridge. Check your connection and retry." :
+          "Could not load saved conversation. Please retry.");
+      }
     } finally {
       this.requests.delete(controller);
       if (epoch === this.epoch || !this.requests.size) { this.loadingOlder = false; this.older.disabled = false; }
