@@ -159,6 +159,7 @@ export class EventFeed {
   constructor(
     public changed: () => void,
     public disconnected: () => void,
+    public message: (message: any) => void = () => {},
   ) {
     this.open();
   }
@@ -215,6 +216,7 @@ export class EventFeed {
             message.method === "missed"
           ) {
             this.delay = 250;
+            this.message(message);
             this.changed();
           }
         }
