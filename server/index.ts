@@ -42,6 +42,30 @@ export function validateKeys(value: unknown): string[] {
     throw invalid();
   return value;
 }
+// The installed core lowercases key specs and cannot encode shifted symbols.
+// Reject the entire request rather than acknowledge corrupted literal text.
+export function coreKeys(input: string[]) {
+  const unsupported = new Set(Array.from('!"#$%&()*+:<>?@^_{|}~'));
+  if (
+    input.some(
+      (key) =>
+        Array.from(key).length === 1 &&
+        (key.codePointAt(0)! > 126 || unsupported.has(key)),
+    )
+  )
+    throw new Failure(
+      400,
+      "unsupported_input",
+      "This core does not support that character yet.",
+    );
+  return input.map((key) =>
+    key === " "
+      ? "space"
+      : /^[A-Z]$/.test(key)
+        ? `shift+${key.toLowerCase()}`
+        : key,
+  );
+}
 export function inputKeys(text: unknown) {
   if (typeof text !== "string") throw invalid();
   if (Buffer.byteLength(text) > 4096)
@@ -247,10 +271,11 @@ export function start(
                   core.call("terminal.send", { terminal: id, text: b.text }),
                 );
               } else {
-                const input =
+                const input = coreKeys(
                   match[2] === "keys"
                     ? validateKeys(b.keys)
-                    : inputKeys(b.text);
+                    : inputKeys(b.text),
+                );
                 await serial(id, () =>
                   core.call("terminal.keys", { terminal: id, keys: input }),
                 );

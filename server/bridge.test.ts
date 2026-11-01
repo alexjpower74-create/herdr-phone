@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, hash } from "./security";
 import { frame, Frames, Core } from "./core";
-import { start, inputKeys } from "./index";
+import { start, inputKeys, coreKeys } from "./index";
 import { Snapshot } from "./state";
 const temp = () => mkdtemp(join(tmpdir(), "phone-test-"));
 test("framed decoder handles every split, coalesced frames and bounded length", () => {
@@ -199,7 +199,7 @@ test("HTTP rejects absent/revoked tokens, wrong origins and URL credentials; inp
       core.calls
         .filter((c) => c.method === "terminal.keys")
         .map((c) => c.p.keys),
-    ).toEqual([["A"], ["B"]]);
+    ).toEqual([["shift+a"], ["shift+b"]]);
     expect(
       (await fetch(base + "/api/device", { method: "DELETE", headers })).status,
     ).toBe(204);
@@ -501,6 +501,38 @@ let first=true;process.stdin.on('data',data=>{if(first){first=false;process.stdo
     c.close();
     if (before === undefined) delete process.env.HERDR_PHONE_HC;
     else process.env.HERDR_PHONE_HC = before;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("verified ASCII aliases preserve case and unsupported text is rejected before input", async () => {
+  expect(coreKeys(inputKeys("a B"))).toEqual(["a", "space", "shift+b"]);
+  expect(() => coreKeys(inputKeys("a🙂"))).toThrow();
+  for (const c of Array.from('!"#$%&()*+:<>?@^_{|}~'))
+    expect(() => coreKeys(inputKeys(c))).toThrow();
+  const dir = await temp(),
+    store = new Store(dir),
+    core = new Mock();
+  const p = await store.exchange(await store.pairing(), "Phone");
+  const app = start({ port: 0, origin: "http://localhost", core, store });
+  try {
+    const r = await fetch(
+      `http://127.0.0.1:${app.server.port}/api/terminals/t1/input`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${p.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: "start🙂" }),
+      },
+    );
+    expect(r.status).toBe(400);
+    expect(core.calls.filter((c) => c.method === "terminal.keys")).toHaveLength(
+      0,
+    );
+  } finally {
+    app.stop();
     await rm(dir, { recursive: true, force: true });
   }
 });
