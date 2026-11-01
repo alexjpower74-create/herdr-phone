@@ -13,6 +13,8 @@ export class Conversation {
   private session: string | null = null;
   private cursor: string | null = null;
   private nodes = new Map<string, HTMLElement>();
+  private entryRows = new Map<string, HTMLElement>();
+  private cursorAlias: { id: string; node: HTMLElement } | null = null;
   private requests = new Set<AbortController>();
   private epoch = 0;
   private loadingOlder = false;
@@ -103,9 +105,15 @@ export class Conversation {
     this.status.textContent = message;
     this.retry.hidden = false;
   }
-  private turnNode(turn: ConversationPage["turns"][number]) {
-    return this.nodes.get(turn.id) ?? [...new Set(this.nodes.values())].find(node =>
-      [...node.children].some(row => turn.entries.some(entry => entry.id === (row as HTMLElement).dataset.entry)));
+  private turnNodes(turn: ConversationPage["turns"][number]) {
+    const matches = new Set<HTMLElement>();
+    const direct = this.nodes.get(turn.id);
+    if (direct) matches.add(direct);
+    for (const entry of turn.entries) {
+      const row = this.entryRows.get(entry.id);
+      if (row?.parentElement) matches.add(row.parentElement);
+    }
+    return [...matches].sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
   }
   private async load(older = false) {
     if (!this.visible || document.hidden) return;
@@ -124,7 +132,7 @@ export class Conversation {
       if (older && session !== this.session) return;
       if (!page.available) {
         this.cancel();
-        this.list.replaceChildren(); this.nodes.clear(); this.initialized = false;
+        this.list.replaceChildren(); this.nodes.clear(); this.entryRows.clear(); this.cursorAlias = null; this.initialized = false;
         this.session = null; this.cursor = null; this.older.hidden = true;
         this.notices.replaceChildren();
         const reasons = {
@@ -138,31 +146,46 @@ export class Conversation {
       }
       const reset = !this.initialized || page.session !== this.session ||
         (!older && this.nodes.size > 0 &&
-          !page.turns.some(turn => this.turnNode(turn)));
+          !page.turns.some(turn => this.turnNodes(turn).length));
       if (reset) {
         this.cancel();
-        this.nodes.clear(); this.list.replaceChildren(); this.session = page.session;
+        this.nodes.clear(); this.entryRows.clear(); this.cursorAlias = null; this.list.replaceChildren(); this.session = page.session;
       }
       this.capturePosition();
       const follow = reset || (!older && this.following);
-      const anchor = [...this.list.children].find(el => el.getBoundingClientRect().bottom > this.host.getBoundingClientRect().top);
+      const anchor = [...this.list.querySelectorAll<HTMLElement>("[data-entry]")].find(el => el.getBoundingClientRect().bottom > this.host.getBoundingClientRect().top);
       const offset = anchor?.getBoundingClientRect().top;
       const fragment = document.createDocumentFragment();
+      const pageAliases = new Map<string, HTMLElement>();
       for (const turn of page.turns) {
-        let node = this.turnNode(turn);
+        const matches = this.turnNodes(turn);
+        let node = matches[0];
         if (!node) {
           node = document.createElement("article"); node.dataset.turn = turn.id;
           this.nodes.set(turn.id, node); fragment.append(node);
         }
-        // Keep aliases while an older cursor still carries the previous fragment ID.
-        this.nodes.set(turn.id, node);
+        // A wider latest window may reveal that several loaded fragments are one turn.
+        for (const other of matches.slice(1)) {
+          node.append(...other.children);
+          if (this.cursorAlias?.node === other) this.cursorAlias.node = node;
+          for (const [id, alias] of pageAliases) if (alias === other) pageAliases.set(id, node);
+          other.remove();
+        }
+        pageAliases.set(turn.id, node);
         // Older windows contribute a prefix; their snapshots never overwrite newer rows.
         const entries = new Map([...node.children].map(el => [(el as HTMLElement).dataset.entry, el as HTMLElement]));
         const keep = new Set<string>();
         const prefix = document.createDocumentFragment();
+        const incoming = new Set(turn.entries.map(entry => entry.id));
+        const nextRows: Array<HTMLElement | null> = [];
+        let nextRow: HTMLElement | null = null;
+        for (let index = turn.entries.length - 1; index >= 0; index--) {
+          nextRows[index] = nextRow;
+          nextRow = entries.get(turn.entries[index].id) ?? nextRow;
+        }
         if (!older && turn.continuesPrevious) {
           for (const [id] of entries) {
-            if (turn.entries.some(entry => entry.id === id)) break;
+            if (incoming.has(id!)) break;
             keep.add(id!);
           }
         }
@@ -172,10 +195,10 @@ export class Conversation {
           if (older && row) continue;
           if (!row) {
             row = document.createElement("div"); row.dataset.entry = entry.id;
+            this.entryRows.set(entry.id, row);
             if (older) prefix.append(row);
             else {
-              const next = turn.entries.slice(index + 1).map(entry => entries.get(entry.id)).find(Boolean);
-              node.insertBefore(row, next ?? null);
+              node.insertBefore(row, nextRows[index]);
             }
           }
           row.className = `conversation-entry conversation-${entry.role}`;
@@ -185,10 +208,26 @@ export class Conversation {
           if (row.textContent !== text) row.textContent = text;
         }
         if (older) node.prepend(prefix);
-        else for (const [id, row] of entries) if (!keep.has(id!)) row.remove();
+        else for (const [id, row] of entries) if (!keep.has(id!)) {
+          row.remove(); this.entryRows.delete(id!);
+        }
       }
       if (older) this.list.prepend(fragment); else this.list.append(fragment);
-      if (reset || older) this.cursor = page.nextCursor;
+      if (reset || older) {
+        this.cursor = page.nextCursor;
+        const first = page.turns[0];
+        if (!this.cursor) this.cursorAlias = null;
+        else if (first) this.cursorAlias = first.continuesPrevious ? { id: first.id, node: pageAliases.get(first.id)! } : null;
+      }
+      // Retain only canonical, current-page and active-cursor aliases. Old latest
+      // fragment IDs otherwise accumulate on every append for a long-lived turn.
+      this.nodes.clear();
+      for (const article of this.list.children) {
+        const node = article as HTMLElement;
+        this.nodes.set(node.dataset.turn!, node);
+      }
+      for (const [id, node] of pageAliases) this.nodes.set(id, node);
+      if (this.cursorAlias) this.nodes.set(this.cursorAlias.id, this.cursorAlias.node);
       this.notices.replaceChildren();
       for (const warning of new Set(page.warnings ?? [])) {
         const message = warning === "long_output_trimmed" ? "[long output trimmed]" :

@@ -286,3 +286,32 @@ test("bounded turn fragments prepend older entries and reconcile latest overlap"
   await expect(page.locator('[data-entry="c"]')).toHaveText("Updated C again", { timeout: 7000 });
   await expect(page.locator(".conversation [data-entry]")).toHaveCount(4);
 });
+
+
+test("latest wider turn consolidates two loaded fragments without duplicate entries", async ({ page }) => {
+  const { model } = await setup(page, "messages", { delayLatest: true });
+  await expect.poll(() => !!model.pending).toBe(true);
+  const entry = (id: string) => ({ id, role: "assistant" as const, text: id });
+  model.delayLatest = false;
+  model.page = { available: true, session: "joined", revision: "1", turns: [
+    { id: "fragment-a", continuesPrevious: true, entries: [entry("a"), entry("b")] },
+    { id: "fragment-b", entries: [entry("c"), entry("d")] },
+  ], nextCursor: "original-cursor" };
+  await model.pending!.fulfill({ json: model.page });
+  await expect(page.locator(".conversation article")).toHaveCount(2);
+  model.page = { ...model.page, revision: "2", turns: [{ id: "joined-fragment", continuesPrevious: true, entries: [entry("b"), entry("c"), entry("d"), entry("e")] }] };
+  await expect(page.locator(".conversation article")).toHaveCount(1, { timeout: 7000 });
+  await expect(page.locator(".conversation [data-entry]")).toHaveText(["a", "b", "c", "d", "e"]);
+  for (let n = 0; n < 8; n++) {
+    model.page = { ...model.page, revision: String(n + 3), turns: [{ id: `shift-${n}`, continuesPrevious: true, entries: [entry("c"), entry("d"), { ...entry("e"), text: `latest-${n}` }] }] };
+    await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
+    await page.getByRole("button", { name: "Conversation", exact: true }).tap();
+    await expect(page.locator('[data-entry="e"]')).toHaveText(`latest-${n}`);
+    await expect(page.locator(".conversation article")).toHaveCount(1);
+  }
+  await hit(page.getByRole("button", { name: "Load older messages" }));
+  model.page = { ...model.page, turns: [{ id: "fragment-a", entries: [entry("oldest")] }], nextCursor: null };
+  await page.getByRole("button", { name: "Load older messages" }).tap();
+  await expect(page.locator(".conversation article")).toHaveCount(1);
+  await expect(page.locator(".conversation [data-entry]")).toHaveText(["oldest", "a", "b", "c", "d", "latest-7"]);
+});
