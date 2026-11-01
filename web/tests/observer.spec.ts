@@ -154,7 +154,7 @@ test("plain fallback is labelled and exact-width bottom rows do not scroll the s
   mock.unavailable();
   const text = Array.from({ length: 24 }, (_, i) => String(i).padEnd(80, "x")).join("\n");
   mock.screen(text);
-  await expect(page.locator("#terminal-info")).toContainText("Plain screen");
+  await expect(page.locator("#terminal-info")).toHaveAttribute("title", /Plain screen/);
   await expect.poll(async () => (await inspect(page)).rows[0].text).toBe("0".padEnd(80, "x"));
   const data = await inspect(page);
   expect(data.baseY).toBe(0);

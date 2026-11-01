@@ -705,8 +705,10 @@ function paintReadable(capturePosition = true, scrollOnly = false) {
 }
 function updateTerminalInfo() {
   const info = document.querySelector("#terminal-info");
-  if (info && active)
+  if (info && active) {
+    info.setAttribute("title", `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"} · ${observerLabel}`);
     info.textContent = conversationOpen ? `${active.title} · ${active.cols} × ${active.rows} · ${connected ? active.status : "reconnecting"} · ${observerLabel}` : "Earlier messages are in Conversation ↑";
+  }
 }
 function scaleTerminal() {
   if (terminalView !== "mirror") return;

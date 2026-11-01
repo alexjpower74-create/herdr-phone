@@ -325,7 +325,7 @@ test("remote terminal stays qualified and old-tab screens are ignored", async ({
     JSON.stringify({ type: "error", code: "probe", message: "Frame boundary" }),
   );
   await expect(page.locator('.notice[role="status"]')).toHaveText("Frame boundary");
-  await expect(page.locator("#terminal-info")).toContainText("100 × 30");
+  await expect(page.locator("#terminal-info")).toHaveAttribute("title", /100 × 30/);
   expect(new URL(page.url()).hash).toBe("#terminal=remote%2Ft3");
 });
 test("pending input retains its terminal and failures cancel queued input", async ({

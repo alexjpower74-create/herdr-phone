@@ -110,12 +110,15 @@ test('touch beginning in scrollback cannot hand off after reaching the top', asy
 
 for (const change of ['view', 'terminal', 'disconnect', 'hidden']) test(`${change} change cancels held pull`, async ({ page }) => {
   const { x, y, model } = await start(page);
+  if (change === 'view') await page.getByRole('button', { name: 'Show readable text' }).focus();
+  if (change === 'terminal') await page.getByRole('button', { name: 'Review', exact: true }).focus();
   await touch(page, 'touchStart', [{ id: 1, x, y }]);
   await touch(page, 'touchMove', [{ id: 1, x, y: y + 100 }]);
-  if (change === 'view') await page.getByRole('button', { name: 'Show readable text' }).click();
+  if (change === 'view') await page.keyboard.press('Enter');
   if (change === 'terminal') {
-    await page.getByRole('button', { name: 'Review', exact: true }).click();
-    await page.getByRole('button', { name: 'Terminal view', exact: true }).click();
+    await page.keyboard.press('Enter');
+    await page.getByRole('button', { name: 'Terminal view', exact: true }).focus();
+    await page.keyboard.press('Enter');
   }
   if (change === 'disconnect') for (const ws of model.watches.keys()) ws.close();
   if (change === 'hidden') await page.evaluate(() => {
