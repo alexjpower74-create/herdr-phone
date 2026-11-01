@@ -18,6 +18,13 @@ async function start(page: Page) {
     for (const name of ['touchstart', 'touchmove', 'touchend']) document.addEventListener(name, e => (window as any).touchTrust.push(e.isTrusted), { capture: true });
   });
   const box = await page.locator('.terminal-viewport').boundingBox();
+  expect(await page.locator('.terminal-viewport').evaluate(el => {
+    const r = el.getBoundingClientRect();
+    return [r.top + 4, r.top + r.height / 2, r.bottom - 4].every(y => {
+      const hit = document.elementFromPoint(r.left + r.width / 2, y);
+      return hit === el || el.contains(hit);
+    });
+  })).toBe(true);
   return { ...fixture, x: Math.round(box!.x + box!.width / 2), y: Math.round(box!.y + 30) };
 }
 async function drag(page: Page, x: number, y: number, dx = 0, dy = 100, cancel = false) {
@@ -27,7 +34,7 @@ async function drag(page: Page, x: number, y: number, dx = 0, dy = 100, cancel =
 }
 test('deliberate top pull reveals earlier messages and returns to newest in Mirror and Read', async ({ page }) => {
   const { x, y, model } = await start(page);
-  const watches = [...model.watches.values()];
+  const watches = model.watchCalls.length;
   await page.locator('.terminal-input').fill('Keep this draft');
   await page.locator('input[type=file]').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('A saved attachment') });
   await page.locator('.terminal-input').blur();
@@ -56,7 +63,7 @@ test('deliberate top pull reveals earlier messages and returns to newest in Mirr
   expect(await page.evaluate(() => (window as any).touchMoves.some(Boolean))).toBe(true);
   await expect(page.locator('.keybar button')).toHaveCount(6);
   await expect(page.getByRole('button', { name: 'Yes, proceed', exact: true })).toBeVisible();
-  expect(model.calls).toEqual([]); expect([...model.watches.values()]).toEqual(watches);
+  expect(model.calls).toEqual([]); expect(model.watchCalls.length).toBe(watches);
 });
 for (const [name, dx, dy, cancel] of [['short', 0, 25, false], ['horizontal', 100, 20, false], ['upward', 0, -25, false], ['cancelled', 0, 100, true]] as const) test(`${name} gesture stays in Terminal`, async ({ page }) => {
   const { x, y } = await start(page); await drag(page, x, y, dx, dy, cancel);
@@ -92,15 +99,12 @@ test('zoom metrics reject a single finger pull without preventing native movemen
 });
 
 test('touch beginning in scrollback cannot hand off after reaching the top', async ({ page }) => {
-  const { x, y, publishPrompt } = await start(page);
-  publishPrompt({ id: 'long', kind: 'approval', options: [] });
+  const { x, y, publishScreen } = await start(page);
+  publishScreen('Retained terminal line\n'.repeat(100));
   // Real wheel positions the scrollable Read view; native WebKit touch panning
   // is not implemented on this host, so no platform scrolling claim is made.
   await page.getByRole('button', { name: 'Show readable text' }).tap();
-  await page.evaluate(() => {
-    const read = document.querySelector('.terminal-read')!;
-    read.append(document.createTextNode('\n' + 'Retained terminal line\n'.repeat(100)));
-  });
+  await expect(page.locator('.terminal-read')).toContainText('Retained terminal line', { timeout: 6000 });
   await page.mouse.move(x, y + 100); await page.mouse.wheel(0, 500);
   await expect.poll(() => page.locator('.terminal-viewport').evaluate(el => el.scrollTop)).toBeGreaterThan(50);
   await drag(page, x, y);
@@ -120,7 +124,10 @@ for (const change of ['view', 'terminal', 'disconnect', 'hidden']) test(`${chang
     await page.getByRole('button', { name: 'Terminal view', exact: true }).focus();
     await page.keyboard.press('Enter');
   }
-  if (change === 'disconnect') for (const ws of model.watches.keys()) ws.close();
+  if (change === 'disconnect') {
+    for (const ws of model.sockets) ws.close();
+    await expect(page.getByText(/Connection lost/)).toBeVisible();
+  }
   if (change === 'hidden') await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
     document.dispatchEvent(new Event('visibilitychange'));

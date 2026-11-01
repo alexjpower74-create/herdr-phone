@@ -5,7 +5,7 @@ const state = { version: 1, revision: 1, machines: [{ id: "local", name: "Comput
 const turn = (n: number) => ({ id: `turn-${n}`, entries: [{ id: `user-${n}`, role: "user", text: `Request ${n}: Review this saved message.` }, { id: `reply-${n}`, role: "assistant", text: `Reply ${n}: The saved response remains readable.\n${"The next step is ready. ".repeat(6)}` }] });
 
 export async function setup(page: Page, preference: string | null = null, deepLink = false, blockedStorage = false) {
-  const model = { data: Array.from({ length: 20 }, (_, i) => turn(i)), holdLatest: false, reads: [] as string[], calls: [] as { path: string; body: any }[], watches: new Map<WebSocketRoute, { terminalId: string; watchId: string }>() };
+  const model = { data: Array.from({ length: 20 }, (_, i) => turn(i)), holdLatest: false, reads: [] as string[], calls: [] as { path: string; body: any }[], sockets: [] as WebSocketRoute[], watchCalls: [] as unknown[], screenText: "The live terminal is ready.", watches: new Map<WebSocketRoute, { terminalId: string; watchId: string }>() };
   let prompt: any = { id: "approval", kind: "approval", options: [{ id: "yes", label: "Yes, proceed", keys: ["enter"] }, { id: "no", label: "No, cancel", keys: ["down", "enter"] }] };
   await page.addInitScript(({ preference, blockedStorage }) => {
     localStorage.setItem("herdr-phone.device", "test-device-token");
@@ -17,11 +17,13 @@ export async function setup(page: Page, preference: string | null = null, deepLi
       Storage.prototype.setItem = function(key, value) { if (key.includes("terminal-view") || key.includes("conversation-default")) throw new Error("Storage unavailable"); return write.call(this, key, value); };
     }
   }, { preference, blockedStorage });
-  const screen = (id = "t1") => ({ type: "screen", terminal: { ...terminal, id }, text: "The live terminal is ready.", complete: true, screenId: prompt?.id || "screen", prompt });
+  const screen = (id = "t1") => ({ type: "screen", terminal: { ...terminal, id }, text: model.screenText, complete: true, screenId: prompt?.id || "screen", prompt });
   await page.routeWebSocket("**/api/ws", ws => {
+    model.sockets.push(ws);
     ws.send(JSON.stringify({ type: "state", state }));
     ws.onMessage(raw => {
       const frame = JSON.parse(String(raw));
+      model.watchCalls.push(frame);
       if (frame.type === "watch") model.watches.set(ws, { terminalId: frame.terminalId, watchId: frame.watchId });
       else if (frame.type === "unwatch") model.watches.delete(ws);
     });
@@ -40,7 +42,10 @@ export async function setup(page: Page, preference: string | null = null, deepLi
   });
   await page.goto(deepLink ? "/#terminal=remote%2Ft2" : "/");
   if (!deepLink) await page.getByRole("button", { name: "W Workbench", exact: true }).tap();
-  return { model, publishPrompt: (next: any) => {
+  return { model, publishScreen: (text: string) => {
+    model.screenText = text;
+    for (const [ws, watch] of model.watches) ws.send(JSON.stringify({ type: "screen", ...watch, cols: 100, rows: 30, text, screenId: "long", prompt }));
+  }, publishPrompt: (next: any) => {
     prompt = next;
     for (const [ws, watch] of model.watches) ws.send(JSON.stringify({ type: "screen", ...watch, cols: 100, rows: 30, text: "Choose an option.", screenId: prompt.id, prompt }));
   } };
