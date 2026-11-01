@@ -1,0 +1,8 @@
+Herdr desktop logo
+Source: https://github.com/herdrdev/herdr-app/blob/master/defaults/frame/welcome/herdr.png
+Project: https://github.com/herdrdev/herdr-app
+License: Apache License, Version 2.0 (herdr-app-APACHE-2.0.txt).
+
+brand.png is the original upstream asset. icon-192.png, icon-512.png and
+apple-touch-icon.png are resized copies. No other asset changes were made.
+The upstream repository has no root NOTICE file.
