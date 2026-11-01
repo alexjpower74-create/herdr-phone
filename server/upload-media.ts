@@ -1,3 +1,4 @@
+import { imageCommand } from "./image-command";
 import { mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,11 +47,11 @@ export async function checkMedia(bytes: Buffer, processes: UploadProcesses, sign
       return { bytes, type: "application/pdf", extension: "pdf", converted: false };
     }
     if (kind === "heic") {
-      const formats = (await run(["magick", "-list", "format"])).toString();
+      const formats = (await run(imageCommand("convert", ["-list", "format"]))).toString();
       if (!/^\s*HEIC\*?\s+HEIC\s+rw/m.test(formats)) throw new Failure(503, "conversion_unavailable", "Image conversion is unavailable.");
     }
     const input = `${kind.toUpperCase()}:${path}`;
-    const dimensions = (await run(["magick", "identify", ...limits, "-ping", "-format", "%w %h\n", input])).toString().trim().split("\n");
+    const dimensions = (await run(imageCommand("identify", [...limits, "-ping", "-format", "%w %h\n", input]))).toString().trim().split("\n");
     let pixels = 0;
     if (dimensions.length > 1024) throw tooLarge();
     for (const row of dimensions) {
@@ -60,14 +61,14 @@ export async function checkMedia(bytes: Buffer, processes: UploadProcesses, sign
       if (pixels > 32000000) throw tooLarge();
     }
     if (kind === "heic") {
-      await run(["magick", ...limits, "-regard-warnings", `${input}[0]`, "-auto-orient", "-strip", "-quality", "90", `JPEG:${output}`]);
+      await run(imageCommand("convert", [...limits, "-regard-warnings", `${input}[0]`, "-auto-orient", "-strip", "-quality", "90", `JPEG:${output}`]));
       if ((await stat(output)).size > MAX_UPLOAD) throw tooLarge();
       const converted = await readFile(output);
       if (converted[0] !== 255 || converted[1] !== 216 || converted[2] !== 255) throw unsupported();
       return { bytes: converted, type: "image/jpeg", extension: "jpg", converted: true };
     }
     // Decode the actual pixels, rather than trusting a magic prefix or metadata alone.
-    await run(["magick", ...limits, "-regard-warnings", input, "null:"]);
+    await run(imageCommand("convert", [...limits, "-regard-warnings", input, "null:"]));
     return { bytes, type: `image/${kind}`, extension: kind === "jpeg" ? "jpg" : kind, converted: false };
   } finally { await rm(dir, { recursive: true, force: true }); }
 }

@@ -35,15 +35,29 @@ export class Uploads {
   private controllers = new Set<AbortController>();
   private pruning?: Promise<void>;
   private configPath: string;
+  private tasks = new Set<Promise<unknown>>();
+  private pruneController = new AbortController();
+  private lastPrune = -Infinity;
+  private closing?: Promise<void>;
+  private pruneTimer: ReturnType<typeof setInterval>;
   constructor(private core: RPC, private store: Store, transport?: UploadTransport) {
     this.transport = transport ?? storageTransport(this.storageProcesses);
     this.configPath = process.env.HERDR_PHONE_TRANSCRIPTS_CONFIG || join(homedir(), ".config/herdr-phone/transcripts.json");
+    this.pruneTimer = setInterval(() => { void this.prune().catch(() => {}); }, 60000);
+    this.pruneTimer.unref?.();
   }
-  close() {
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
     this.stopped = true;
+    clearInterval(this.pruneTimer);
+    this.pruneController.abort();
     for (const controller of this.controllers) controller.abort();
-    this.processes.close();
-    // Storage children observe the same abort signal; cleanup uses fresh bounded readers.
+    const mediaClosed = this.processes.close();
+    this.closing = (async () => {
+      await Promise.allSettled([...this.tasks, mediaClosed, ...(this.pruning ? [this.pruning] : [])]);
+      await this.storageProcesses.close();
+    })();
+    return this.closing;
   }
   async target(machine: string): Promise<UploadTarget> {
     if (machine === "local") return { root: process.env.HERDR_PHONE_UPLOADS_DIR || join(homedir(), ".cache/herdr-phone/uploads") };
@@ -61,14 +75,18 @@ export class Uploads {
   }
   async prune() {
     if (this.pruning) return this.pruning;
+    if (this.stopped || this.store.now() - this.lastPrune < 60000) return;
+    this.lastPrune = this.store.now();
     const work = async () => {
       const state = await this.store.read(), now = this.store.now();
       const expired = (state.uploads || []).filter(r => r.expiresAt <= now || (r.status === "pending" && r.createdAt + 15 * 60000 <= now));
-      for (const record of expired) {
+      const deadline = Date.now() + 2000;
+      for (const record of expired.slice(0, 16)) {
+        if (this.stopped || Date.now() >= deadline) break;
         try {
           const target = await this.target(record.machine);
           if (target.root !== record.root) continue;
-          await this.transport("remove", target, record);
+          await this.transport("remove", target, record, undefined, AbortSignal.any([this.pruneController.signal, AbortSignal.timeout(1500)]));
           await this.store.transact(s => { s.uploads = (s.uploads || []).filter(r => r.id !== record.id); });
         } catch { /* Retain metadata/quota until its owned file can be removed safely. */ }
       }
@@ -79,20 +97,30 @@ export class Uploads {
   create(device: string, id: string, file: File, signal?: AbortSignal): Promise<UploadedFile> {
     return this.receive(device, id, async () => file, signal);
   }
-  async receive(device: string, id: string, parse: () => Promise<File>, signal?: AbortSignal): Promise<UploadedFile> {
-    if (this.stopped || signal?.aborted) throw new Failure(503, "upload_unavailable", "Upload was cancelled.");
-    if (this.active >= 4) throw capacity();
+  receive(device: string, id: string, parse: (signal: AbortSignal) => Promise<File>, signal?: AbortSignal): Promise<UploadedFile> {
+    if (this.stopped || signal?.aborted) return Promise.reject(new Failure(503, "upload_unavailable", "Upload was cancelled."));
+    if (this.active >= 4) return Promise.reject(capacity());
     this.active++;
-    try { return await this.process(device, id, await parse(), signal); }
-    finally { this.active--; }
+    const controller = new AbortController(), abort = () => controller.abort();
+    this.controllers.add(controller); signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(abort, 60000);
+    const operation = (async () => {
+      try {
+        const file = await parse(controller.signal);
+        return await this.process(device, id, file, controller.signal);
+      } finally {
+        this.active--; clearTimeout(timer); this.controllers.delete(controller); signal?.removeEventListener("abort", abort);
+      }
+    })();
+    this.tasks.add(operation);
+    void operation.finally(() => this.tasks.delete(operation)).catch(() => {});
+    return operation;
   }
   private async process(device: string, id: string, file: File, signal?: AbortSignal): Promise<UploadedFile> {
     if (this.stopped || signal?.aborted) throw new Failure(503, "upload_unavailable", "Upload was cancelled.");
     if (file.size > MAX_UPLOAD) throw new Failure(413, "too_large", "File is too large.");
     if (!file.size) throw new Failure(415, "unsupported_file", "Unsupported or invalid file content.");
-    const controller = new AbortController(), abort = () => controller.abort();
-    this.controllers.add(controller); signal?.addEventListener("abort", abort, { once: true });
-    let reserved = false, record: UploadRecord | undefined, target: UploadTarget | undefined;
+    let reserved = false, writeAttempted = false, record: UploadRecord | undefined, target: UploadTarget | undefined;
     try {
       await this.prune();
       const facts = await this.core.call("terminal.get", { terminal: id });
@@ -110,18 +138,21 @@ export class Uploads {
         (s.uploads ||= []).push(record!);
       });
       reserved = true;
-      const media = await checkMedia(Buffer.from(await file.arrayBuffer()), this.processes, controller.signal);
+      const media = await checkMedia(Buffer.from(await file.arrayBuffer()), this.processes, signal!);
       record = { ...record, type: media.type, converted: media.converted, name: displayName(file.name, media.converted), filename: key + "." + media.extension };
+      record.digest = digest(media.bytes);
       await this.store.transact(s => {
         this.checkDevice(s, device);
         const stored = s.uploads?.find(r => r.id === key);
         if (!stored) throw unavailable();
         stored.filename = record!.filename;
+        stored.digest = record!.digest;
       });
       record = { ...record, size: media.bytes.length, digest: digest(media.bytes) };
-      if (controller.signal.aborted) throw unavailable();
-      await this.transport("write", target, record, media.bytes, controller.signal);
-      if (controller.signal.aborted || this.stopped || incarnation(await this.core.call("terminal.get", { terminal: id })) !== binding) throw unavailable();
+      if (signal!.aborted) throw unavailable();
+      writeAttempted = true;
+      await this.transport("write", target, record, media.bytes, signal!);
+      if (signal!.aborted || this.stopped || incarnation(await this.core.call("terminal.get", { terminal: id })) !== binding) throw unavailable();
       record.status = "ready";
       await this.store.transact(s => {
         this.checkDevice(s, device);
@@ -132,13 +163,11 @@ export class Uploads {
       return publicUpload(record);
     } catch (error) {
       if (reserved && record && target) {
-        let removed = false;
-        try { await this.transport("remove", target, record); removed = true; } catch { /* Prune retries safely. */ }
+        let removed = !writeAttempted || (error as any)?.cleanupNeeded === false;
+        try { if (writeAttempted && !removed) await this.transport("remove", target, record); removed = true; } catch { /* Prune retries safely. */ }
         if (removed) await this.store.transact(s => { s.uploads = (s.uploads || []).filter(r => r.id !== record!.id); }).catch(() => {});
       }
       throw error;
-    } finally {
-      this.controllers.delete(controller); signal?.removeEventListener("abort", abort);
     }
   }
   async recheck(device: string, id: string, ids: string[]): Promise<void> {

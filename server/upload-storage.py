@@ -3,6 +3,9 @@ import os,sys,json,base64,stat,hashlib,signal,re
 signal.alarm(25)
 request=json.loads(base64.b64decode(sys.argv[1]))
 handles=[]
+owned_partial=False
+owned_final=False
+cleaned=True
 try:
     root=os.path.expanduser(request['root'])
     if not os.path.isabs(root) or '..' in root.split(os.sep): raise ValueError()
@@ -19,6 +22,7 @@ try:
     action=request['action']
     if action=='write':
         output=os.open(partial,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=fd)
+        owned_partial=True;cleaned=False
         os.fchmod(output,0o600)
         handles.append(output);total=0;digest=hashlib.sha256()
         try:
@@ -33,18 +37,32 @@ try:
             if total!=request['size'] or digest.hexdigest()!=request['digest']: raise ValueError()
             os.fsync(output)
             os.link(partial,name,src_dir_fd=fd,dst_dir_fd=fd,follow_symlinks=False)
-            os.unlink(partial,dir_fd=fd);os.fsync(fd)
+            owned_final=True
+            os.unlink(partial,dir_fd=fd);owned_partial=False;os.fsync(fd)
         except BaseException:
-            try: os.unlink(partial,dir_fd=fd)
-            except OSError: pass
+            if owned_partial:
+                try: os.unlink(partial,dir_fd=fd);owned_partial=False
+                except OSError: pass
+            if owned_final:
+                try: os.unlink(name,dir_fd=fd);owned_final=False
+                except OSError: pass
+            cleaned=not owned_partial and not owned_final
             raise
         print(json.dumps({'path':os.path.join(root,date,name)}))
     elif action=='remove':
         for item in [partial,name]:
             try:
                 s=os.stat(item,dir_fd=fd,follow_symlinks=False)
-                if stat.S_ISREG(s.st_mode): os.unlink(item,dir_fd=fd)
-                else: raise ValueError()
+                if not stat.S_ISREG(s.st_mode): raise ValueError()
+                if item==name and request.get('digest'):
+                    check=os.open(item,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd);handles.append(check)
+                    checksum=hashlib.sha256()
+                    while True:
+                        data=os.read(check,65536)
+                        if not data:break
+                        checksum.update(data)
+                    if checksum.hexdigest()!=request['digest']:raise ValueError()
+                os.unlink(item,dir_fd=fd)
             except FileNotFoundError: pass
         print('{}')
     elif action=='check':
@@ -60,7 +78,7 @@ try:
         print(json.dumps({'path':os.path.join(root,date,name)}))
     else: raise ValueError()
 except Exception:
-    print(json.dumps({'error':'storage_unavailable'}))
+    print(json.dumps({'error':'storage_unavailable','cleaned':cleaned}))
 finally:
     for fd in reversed(handles):
         try:os.close(fd)

@@ -265,12 +265,14 @@ export function start(
       throw invalid();
     }
   }
-  async function multipart(req: Request): Promise<File> {
+  async function multipart(req: Request, signal: AbortSignal): Promise<File> {
     const contentType = req.headers.get("content-type") || "";
     if (!/^multipart\/form-data;\s*boundary=/i.test(contentType)) throw invalid();
     if (Number(req.headers.get("content-length")) > MAX_UPLOAD + UPLOAD_ENVELOPE) throw new Failure(413, "too_large", "File is too large.");
     const reader = req.body?.getReader();
     if (!reader) throw invalid();
+    const abort = () => { void reader.cancel().catch(() => {}); };
+    signal.addEventListener("abort", abort, { once: true });
     const chunks: Uint8Array[] = []; let bytes = 0;
     while (true) {
       const part = await reader.read();
@@ -279,6 +281,8 @@ export function start(
       if (bytes > MAX_UPLOAD + UPLOAD_ENVELOPE) { await reader.cancel(); throw new Failure(413, "too_large", "File is too large."); }
       chunks.push(part.value);
     }
+    signal.removeEventListener("abort", abort);
+    if (signal.aborted) throw new Failure(503, "upload_unavailable", "Upload was cancelled.");
     let form: FormData;
     try { form = await new Request("http://upload.invalid", { method: "POST", headers: { "content-type": contentType }, body: Buffer.concat(chunks) }).formData(); }
     catch { throw invalid(); }
@@ -424,7 +428,9 @@ export function start(
             if (!/^(?:[A-Za-z0-9_.-]+\/)?t[a-zA-Z0-9]+$/.test(id))
               throw invalid();
             if (match[2] === "uploads" && req.method === "POST") {
-              return json({ upload: await uploads.receive(device.id, id, () => multipart(req), req.signal) }, 201);
+              const upload = await uploads.receive(device.id, id, (signal) => multipart(req, signal), req.signal);
+              await auth(req);
+              return json({ upload }, 201);
             }
             if (match[2] === "conversation" && req.method === "GET") {
               if ([...url.searchParams.keys()].some(k => k !== "before") || url.searchParams.getAll("before").length > 1) throw invalid();
@@ -486,6 +492,7 @@ export function start(
                   }
                   await auth(req);
                   await uploads.recheck(device.id, id, attachments);
+                  if (stopped || req.signal.aborted) throw new Failure(503, "upload_unavailable", "Sending was cancelled.");
                   await core.call("terminal.send", {
                     terminal: id,
                     text: message,
@@ -682,13 +689,14 @@ export function start(
     stop() {
       stopped = true;
       conversations.close?.();
-      uploads.close();
+      const uploadsClosed = uploads.close();
       push.stopped = true;
       events?.close();
       clearInterval(interval);
       for (const ws of sockets) closeSocket(ws, 1001, "Server stopped");
       server.stop(true);
       if (core instanceof Core) core.close();
+      return uploadsClosed;
     },
   };
 }

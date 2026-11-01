@@ -24,7 +24,8 @@ export function validUploads(value: unknown): value is UploadRecord[] {
     ["pending", "ready"].includes(r.status) && typeof r.converted === "boolean" && typeof r.type === "string" &&
     Number.isSafeInteger(r.size) && r.size > 0 && r.size <= MAX_UPLOAD && Number.isSafeInteger(r.createdAt) &&
     Number.isSafeInteger(r.expiresAt) && r.expiresAt === r.createdAt + UPLOAD_LIFETIME &&
-    (r.status === "pending" ? r.digest === "" : /^[a-f0-9]{64}$/.test(r.digest)));
+    (r.status === "pending" ? (r.digest === "" || /^[a-f0-9]{64}$/.test(r.digest)) && r.type === "" :
+      /^[a-f0-9]{64}$/.test(r.digest) && ({ png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp", pdf: "application/pdf", txt: "text/plain" } as Record<string, string>)[r.filename.split(".").at(-1)!] === r.type));
 }
 export function publicUpload(record: UploadedFile): UploadedFile {
   return { id: record.id, name: record.name, type: record.type, size: record.size, converted: record.converted };

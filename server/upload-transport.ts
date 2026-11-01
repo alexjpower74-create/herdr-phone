@@ -16,7 +16,11 @@ export function storageTransport(processes: UploadProcesses): UploadTransport {
     const input = Buffer.concat([Buffer.from(Buffer.from(script).toString("base64") + "\n"), bytes ?? Buffer.alloc(0)]);
     try {
       const result = JSON.parse((await processes.run(argv, input, 30000, signal)).toString());
-      if (result.error) throw Error();
+      if (result.error) {
+        const error = new Failure(503, "upload_unavailable", "Private upload storage is unavailable.");
+        if (action === "write" && result.cleaned === true) Object.assign(error, { cleanupNeeded: false });
+        throw error;
+      }
       if (action !== "remove" && (typeof result.path !== "string" || !result.path.startsWith("/") || result.path.includes("\0") || !result.path.endsWith(`/${record.date}/${record.filename}`))) throw Error();
       return result;
     } catch (e) {
