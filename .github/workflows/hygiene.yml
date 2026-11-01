@@ -10,7 +10,7 @@ jobs:
       - name: No personal data
         run: tools/check-no-personal-data
   bridge:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -21,6 +21,19 @@ jobs:
       - name: Install attachment validators
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends imagemagick poppler-utils
+          sudo apt-get install -y --no-install-recommends \
+            imagemagick poppler-utils libheif-plugin-libde265 libheif-plugin-x265
+      - name: Verify HEIC encoding and decoding
+        run: |
+          image_check_dir=$(mktemp -d)
+          trap 'rm -rf "$image_check_dir"' EXIT
+          magick -version
+          for converter in magick convert; do
+            "$converter" -size 8x6 xc:red "HEIC:$image_check_dir/$converter.heic"
+            "$converter" "HEIC:$image_check_dir/$converter.heic" "JPEG:$image_check_dir/$converter.jpg"
+            dimensions=$(identify -format '%m %wx%h' "$image_check_dir/$converter.jpg")
+            test "$dimensions" = 'JPEG 8x6'
+            echo "$converter: HEIC encode/decode and JPEG dimensions verified"
+          done
       - name: Bridge checks
         run: bun test ./server

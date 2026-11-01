@@ -46,7 +46,7 @@ function executeImage(operation: "convert" | "identify", args: string[], options
   return execFileSync(argv[0], argv.slice(1), options);
 }
 function image(format: string) {
-  return executeImage("convert", ["-size", "8x6", "xc:red", `${format}:-`], { maxBuffer: MAX_UPLOAD, stdio: ["ignore", "pipe", "ignore"] });
+  return executeImage("convert", ["-size", "8x6", "xc:red", `${format}:-`], { maxBuffer: MAX_UPLOAD, stdio: ["ignore", "pipe", "pipe"] });
 }
 function pdf() {
   const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>"];
