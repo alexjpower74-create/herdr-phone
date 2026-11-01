@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { readFile } from "node:fs/promises";
+import { configuredPrograms } from "./spaces";
 import type { RPC } from "./core";
 export function terminal(t: any) {
   return {
@@ -34,26 +35,57 @@ export class Snapshot {
     { at: number; repo: string | null; branch: string | null }
   >();
   constructor(public core: RPC) {}
-  async programs() {
+  programCache = new Map<string, { at: number; programs: any[] }>();
+  async programs(machine = "local") {
     try {
-      const p = JSON.parse(
-        await readFile(
-          process.env.HERDR_PHONE_PROGRAMS ||
-            join(homedir(), ".config", "herdr-app", "programs.json"),
-          "utf8",
-        ),
+      const cached = this.programCache.get(machine);
+      if (cached && Date.now() - cached.at < 30000) return cached.programs;
+      const programs = (await configuredPrograms(this.core, machine)).map(
+        ({ id, name }) => ({ id, name, machineId: machine }),
       );
-      return Object.entries(p.programs || {})
-        .filter(
-          ([, v]: any) =>
-            Array.isArray(v.run) &&
-            v.run.length > 0 &&
-            v.run.every((a: any) => typeof a === "string" && a.length > 0),
-        )
-        .map(([id, v]: any) => ({ id, name: v.name || id }));
+      this.programCache.set(machine, { at: Date.now(), programs });
+      return programs;
     } catch {
       return [];
     }
+  }
+  async colors() {
+    try {
+      const shared = JSON.parse(
+        await readFile(
+          process.env.HERDR_PHONE_SHARED ||
+            join(homedir(), ".config/herdr-app/shared.json"),
+          "utf8",
+        ),
+      );
+      return shared["space.colors"] || shared.space?.colors || {};
+    } catch {
+      return {};
+    }
+  }
+  folder(s: any, machine: string, all: Map<string, any>): string {
+    for (const tab of s.tabs || []) {
+      const ordered = ids(tab.root).map((id) =>
+        machine === "local" || id.includes("/") ? id : `${machine}/${id}`,
+      );
+      for (const t of all.values()) {
+        if (
+          t.labels?.["herdr.space"] === s.id &&
+          t.labels?.["herdr.tab"] === tab.id &&
+          (machine === "local"
+            ? !t.address.includes("/")
+            : t.address.startsWith(machine + "/")) &&
+          !ordered.includes(t.address)
+        )
+          ordered.push(t.address);
+      }
+      for (const id of ordered) {
+        const t = all.get(id);
+        if (t?.state === "live" && (t.foreground?.cwd || t.cwd))
+          return t.foreground?.cwd || t.cwd;
+      }
+    }
+    return s.folder || "";
   }
   get(force = false): Promise<any> {
     if (!force && this.cached && Date.now() - this.at < 750)
@@ -65,10 +97,11 @@ export class Snapshot {
     return this.inflight;
   }
   async refresh() {
-    const [listing, machineList, programs] = await Promise.all([
+    const [listing, machineList, localPrograms, colors] = await Promise.all([
       this.core.call("terminal.list", { all: true }),
       this.core.call("machine.list"),
       this.programs(),
+      this.colors(),
     ]);
     const machines = [
       { id: "local", name: "This computer", online: true },
@@ -79,6 +112,20 @@ export class Snapshot {
           name: m.name,
           online: m.state === "connected",
         })),
+    ];
+    const programs = [
+      ...localPrograms,
+      ...(
+        await Promise.all(
+          machines
+            .slice(1)
+            .map((m) =>
+              m.online
+                ? this.programs(m.id)
+                : Promise.resolve(this.programCache.get(m.id)?.programs || []),
+            ),
+        )
+      ).flat(),
     ];
     await Promise.all(
       machines
@@ -118,9 +165,10 @@ export class Snapshot {
         .filter((m) => m.online)
         .flatMap((m) =>
           (this.layouts.get(m.id)?.spaces || []).map(async (s: any) => {
-            const key = `${m.id}:${s.folder || ""}`;
+            const folder = this.folder(s, m.id, all);
+            const key = `${m.id}:${folder}`;
             if (
-              !s.folder ||
+              !folder ||
               Date.now() - (this.metadata.get(key)?.at || 0) < 30000
             )
               return;
@@ -133,11 +181,12 @@ export class Snapshot {
             try {
               const result = await this.core.call("machine.exec", {
                 ...(m.id === "local" ? {} : { on: m.id }),
-                cwd: s.folder,
+                cwd: folder,
                 argv: [
                   "git",
                   "rev-parse",
-                  "--show-toplevel",
+                  "--path-format=absolute",
+                  "--git-common-dir",
                   "--abbrev-ref",
                   "HEAD",
                 ],
@@ -149,7 +198,7 @@ export class Snapshot {
                   .trim()
                   .split("\n");
                 if (lines.length === 2) {
-                  meta.repo = basename(lines[0]);
+                  meta.repo = basename(lines[0].replace(/\/\.git\/?$/, ""));
                   meta.branch = lines[1] === "HEAD" ? null : lines[1];
                 }
               }
@@ -160,35 +209,49 @@ export class Snapshot {
     const spaces = machines.flatMap((m) => {
       const qualify = (id: string) =>
         m.id === "local" || id.startsWith(m.id + "/") ? id : `${m.id}/${id}`;
-      return (this.layouts.get(m.id)?.spaces || []).map((s: any) => ({
-        id: qualify(s.id),
-        machineId: m.id,
-        name: s.name || basename(s.folder || "") || "Space",
-        cwd: s.folder || "",
-        repo: this.metadata.get(`${m.id}:${s.folder || ""}`)?.repo || null,
-        branch: this.metadata.get(`${m.id}:${s.folder || ""}`)?.branch || null,
-        color: /^#[a-f0-9]{6}$/i.test(s.color) ? s.color : "#6977b8",
-        tabs: (s.tabs || []).map((tab: any, index: number) => {
-          const ordered = ids(tab.root).map(qualify);
-          for (const t of listing.terminals)
-            if (
-              t.labels?.["herdr.space"] === s.id &&
-              t.labels?.["herdr.tab"] === tab.id &&
-              (m.id === "local"
-                ? !t.address.includes("/")
-                : t.address.startsWith(m.id + "/")) &&
-              !ordered.includes(t.address)
-            )
-              ordered.push(t.address);
-          return {
-            id: qualify(tab.id),
-            name: tab.name || `Tab ${index + 1}`,
-            terminals: ordered
-              .filter((id) => all.has(id))
-              .map((id) => terminal(all.get(id))),
-          };
-        }),
-      }));
+      return (this.layouts.get(m.id)?.spaces || []).map((s: any) => {
+        const folder = this.folder(s, m.id, all);
+        const palette: Record<string, string> = {
+          ansi6: "#22a99a",
+          ansi3: "#e3814f",
+          ansi4: "#5b8def",
+          ansi5: "#8b7cf6",
+          ansi2: "#3fae6a",
+          ansi1: "#d9649a",
+        };
+        const color = colors[qualify(s.id)] || s.color || "ansi4";
+        return {
+          id: qualify(s.id),
+          machineId: m.id,
+          name: s.name || basename(s.folder || "") || "Space",
+          cwd: folder,
+          repo: this.metadata.get(`${m.id}:${folder}`)?.repo || null,
+          branch: this.metadata.get(`${m.id}:${folder}`)?.branch || null,
+          color: /^#[a-f0-9]{6}$/i.test(color)
+            ? color
+            : palette[color] || palette.ansi4,
+          tabs: (s.tabs || []).map((tab: any, index: number) => {
+            const ordered = ids(tab.root).map(qualify);
+            for (const t of listing.terminals)
+              if (
+                t.labels?.["herdr.space"] === s.id &&
+                t.labels?.["herdr.tab"] === tab.id &&
+                (m.id === "local"
+                  ? !t.address.includes("/")
+                  : t.address.startsWith(m.id + "/")) &&
+                !ordered.includes(t.address)
+              )
+                ordered.push(t.address);
+            return {
+              id: qualify(tab.id),
+              name: tab.name || `Tab ${index + 1}`,
+              terminals: ordered
+                .filter((id) => all.has(id))
+                .map((id) => terminal(all.get(id))),
+            };
+          }),
+        };
+      });
     });
     const next = {
       version: 1,

@@ -4,6 +4,8 @@ import { realpath } from "node:fs/promises";
 import { Core, EventFeed, type RPC } from "./core";
 import { Store, Failure, invalid, unauthorized } from "./security";
 import { Snapshot, terminal } from "./state";
+import { createSpace } from "./spaces";
+import { detectPrompt } from "./prompts";
 
 type SocketData = {
   token: string;
@@ -29,23 +31,47 @@ const keys = new Set([
   "end",
 ]);
 export function validateKeys(value: unknown): string[] {
-  if (!Array.isArray(value) || !value.length || value.length > 128 ||
-      value.some(k => typeof k !== "string" || (!keys.has(k) && !/^[A-Za-z0-9]$/.test(k))))
+  if (
+    !Array.isArray(value) ||
+    !value.length ||
+    value.length > 128 ||
+    value.some(
+      (k) =>
+        typeof k !== "string" || (!keys.has(k) && !/^[A-Za-z0-9]$/.test(k)),
+    )
+  )
     throw invalid();
   return value;
 }
 export function coreKeys(input: string[]) {
-  return validateKeys(input).map(key => /^[A-Z]$/.test(key) ? `shift+${key.toLowerCase()}` : key);
+  return validateKeys(input).map((key) =>
+    /^[A-Z]$/.test(key) ? `shift+${key.toLowerCase()}` : key,
+  );
 }
 export function validateText(text: unknown): string {
-  if (typeof text !== "string" || !text.length || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\p{Cs}]/u.test(text))
+  if (
+    typeof text !== "string" ||
+    !text.length ||
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\p{Cs}]/u.test(text)
+  )
     throw invalid();
   if (Buffer.byteLength(text) > 4096)
     throw new Failure(413, "too_large", "Input is too large.");
   return text;
 }
 export function screenDigest(id: string, text: string, facts: any): string {
-  return createHash("sha256").update(JSON.stringify([id, text, facts.state, facts.status, facts.turn, facts.status_ms])).digest("hex");
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        id,
+        text,
+        facts.state,
+        facts.status,
+        facts.turn,
+        facts.status_ms,
+      ]),
+    )
+    .digest("hex");
 }
 export function start(
   options: {
@@ -81,7 +107,11 @@ export function start(
     });
   const error = (e: any) => {
     if (!(e instanceof Failure) && e?.kind === "blocked")
-      e = new Failure(409, "terminal_blocked", "This terminal is waiting for a choice.");
+      e = new Failure(
+        409,
+        "terminal_blocked",
+        "This terminal is waiting for a choice.",
+      );
     if (!(e instanceof Failure) && e?.kind === "not_found")
       e = new Failure(404, "not_found", "Resource not found.");
     if (
@@ -153,8 +183,19 @@ export function start(
       core.call("terminal.get", { terminal: id }),
       core.call("terminal.read", { terminal: id, lines: 0 }),
     ]);
-    return { terminal: terminal(t), text: read.text, complete: read.complete,
-      screenId: screenDigest(id, read.text, t), prompt: null };
+    const screenId = screenDigest(id, read.text, t);
+    return {
+      terminal: terminal(t),
+      text: read.text,
+      complete: read.complete,
+      screenId,
+      prompt: detectPrompt(
+        read.text,
+        terminal(t).status,
+        screenId,
+        read.complete,
+      ),
+    };
   }
   const server = Bun.serve<SocketData>({
     hostname: "127.0.0.1",
@@ -212,8 +253,13 @@ export function start(
           }
           if (path === "/api/state" && req.method === "GET")
             return json(await state.get());
+          if (path === "/api/spaces" && req.method === "POST") {
+            const result = await createSpace(core, await body(req));
+            state.at = 0;
+            return json(result, 201);
+          }
           const match = path.match(
-            /^\/api\/terminals\/([^/]+)\/(screen|keys|send)$/,
+            /^\/api\/terminals\/([^/]+)\/(screen|keys|send|prompt)$/,
           );
           if (match) {
             let id;
@@ -228,21 +274,61 @@ export function start(
               return json(await screen(id));
             if (req.method === "POST" && match[2] !== "screen") {
               const b = await body(req);
-              if (match[2] === "send") {
+              if (match[2] === "prompt") {
+                if (
+                  typeof b.promptId !== "string" ||
+                  typeof b.optionId !== "string"
+                )
+                  throw invalid();
+                await serial(id, async () => {
+                  const current = await screen(id);
+                  const choice =
+                    current.prompt?.id === b.promptId
+                      ? current.prompt.options.find(
+                          (option) => option.id === b.optionId,
+                        )
+                      : undefined;
+                  if (!choice)
+                    throw new Failure(
+                      409,
+                      "stale_prompt",
+                      "The dialog changed. Review it again.",
+                    );
+                  await core.call("terminal.keys", {
+                    terminal: id,
+                    keys: coreKeys(choice.keys),
+                  });
+                });
+              } else if (match[2] === "send") {
                 const text = validateText(b.text);
-                if (b.force !== undefined && typeof b.force !== "boolean") throw invalid();
-                if (b.force === true && typeof b.screenId !== "string") throw invalid();
+                if (b.force !== undefined && typeof b.force !== "boolean")
+                  throw invalid();
+                if (b.force === true && typeof b.screenId !== "string")
+                  throw invalid();
                 await serial(id, async () => {
                   if (b.force === true) {
                     const current = await screen(id);
-                    if (current.terminal.status !== "blocked" || current.screenId !== b.screenId)
-                      throw new Failure(409, "stale_prompt", "The dialog changed. Review it again.");
+                    if (
+                      current.terminal.status !== "blocked" ||
+                      current.screenId !== b.screenId
+                    )
+                      throw new Failure(
+                        409,
+                        "stale_prompt",
+                        "The dialog changed. Review it again.",
+                      );
                   }
-                  await core.call("terminal.send", { terminal: id, text, force: b.force === true });
+                  await core.call("terminal.send", {
+                    terminal: id,
+                    text,
+                    force: b.force === true,
+                  });
                 });
               } else {
                 const input = coreKeys(b.keys);
-                await serial(id, () => core.call("terminal.keys", { terminal: id, keys: input }));
+                await serial(id, () =>
+                  core.call("terminal.keys", { terminal: id, keys: input }),
+                );
               }
               return json({ ok: true });
             }

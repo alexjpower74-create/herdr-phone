@@ -351,7 +351,7 @@ test("programs expose runnable entries only and repository metadata is real and 
     };
     const s = new Snapshot(c),
       snap = await s.get();
-    expect(snap.programs).toEqual([{ id: "shell", name: "Shell" }]);
+    expect(snap.programs).toEqual([{ id: "shell", name: "Shell", machineId: "local" }]);
     expect(snap.spaces[0]).toMatchObject({
       repo: "project",
       branch: "feature",
