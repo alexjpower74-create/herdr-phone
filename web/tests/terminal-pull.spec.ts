@@ -1,6 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import { setup } from "./gesture-fixture";
 
+test.use({ isMobile: true });
+test.skip(({ browserName }) => browserName !== "webkit", "Native touch protocol coverage runs in WebKit.");
+
 async function touch(page: Page, type: string, points: { id: number; x: number; y: number }[]) {
   const impl = (page as any)._connection?.toImpl(page);
   const session = impl?.delegate?._pageProxySession;
