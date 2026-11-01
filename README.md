@@ -34,6 +34,7 @@ privately under `~/.config/herdr-phone/`; only token hashes are retained.
 | `HERDR_PHONE_STATIC_DIR` | `web/dist` | Built web app |
 | `HERDR_PHONE_HC` | `hc` | Core client executable |
 | `HERDR_PHONE_TRANSCRIPTS_CONFIG` | `~/.config/herdr-phone/transcripts.json` | Private conversation source configuration |
+| `HERDR_PHONE_UPLOADS_DIR` | `~/.cache/herdr-phone/uploads` | Private local attachment storage |
 | `HERDR_PHONE_PROGRAMS` | Installed app configuration | Available terminal programs |
 | `HERDR_PHONE_VAPID_SUBJECT` | Configured HTTPS origin | HTTPS contact URL or mailto URI for push services |
 
@@ -81,6 +82,19 @@ require Python 3; remote reads also require noninteractive SSH to the configured
 machine. No additional bridge or reader is installed remotely. Missing or
 ambiguous process-to-session matches show an unavailable state rather than
 selecting another conversation from the same working directory.
+
+Use the **paperclip** beside Send to choose photos, camera images, PDFs or text
+files. Preview or remove selections before sending. Files stay on the phone
+until Send; the bridge then stores them on the terminal's machine and submits
+their paths with your message. Up to eight files are allowed, each at most
+20 MiB. HEIC/HEIF images become JPEG with orientation preserved. Failed uploads
+keep the draft and selected files, and send no partial message.
+
+Attachment validation needs Python 3, ImageMagick and Poppler's `pdfinfo` on
+the bridge; HEIC conversion also needs ImageMagick's HEIF support. Remote storage
+uses the same private SSH mapping as Conversation. Generated files are private
+(0600), never exposed as download URLs, and removed after seven days. See the
+[attachment API](docs/API.md#file-attachments) for storage and capacity limits.
 
 See the [colour preview](docs/screens/terminal-colours-after-webkit.png),
 [history preview](docs/screens/terminal-history-after-webkit.png), and short

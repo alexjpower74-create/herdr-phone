@@ -18,5 +18,9 @@ jobs:
           bun-version: 1.4.4
       - name: Install bridge dependencies
         run: bun install --frozen-lockfile
+      - name: Install attachment validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends imagemagick poppler-utils
       - name: Bridge checks
         run: bun test server
