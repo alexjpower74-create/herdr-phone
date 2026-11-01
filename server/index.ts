@@ -6,6 +6,8 @@ import { Store, Failure, invalid, unauthorized } from "./security";
 import { Snapshot, terminal } from "./state";
 import { createSpace } from "./spaces";
 import { detectPrompt } from "./prompts";
+import { Push, endpoint, subscription, type PushTransport } from "./push";
+import { randomBytes } from "node:crypto";
 
 type SocketData = {
   token: string;
@@ -80,6 +82,7 @@ export function start(
     core?: RPC;
     store?: Store;
     staticDir?: string;
+    pushTransport?: PushTransport;
   } = {},
 ) {
   const port = options.port ?? Number(process.env.HERDR_PHONE_PORT || 8790);
@@ -92,6 +95,7 @@ export function start(
   const core = options.core || new Core(),
     store = options.store || new Store(),
     state = new Snapshot(core);
+  const push = new Push(store, origin, options.pushTransport);
   const sockets = new Set<any>(),
     queues = new Map<string, Promise<any>>();
   const root = resolve(
@@ -250,6 +254,27 @@ export function start(
               if (ws.data.deviceId === device.id)
                 ws.close(4001, "Device revoked");
             return new Response(null, { status: 204 });
+          }
+          if (path === "/api/push/key" && req.method === "GET")
+            return json({ publicKey: (await push.keys()).publicKey });
+          if (path === "/api/push/subscription" && req.method === "GET") {
+            const current = await push.current(device.id);
+            return json({ enabled: !!current, endpoint: current?.endpoint ?? null });
+          }
+          if (path === "/api/push/subscription" && req.method === "POST") {
+            await store.setSubscription(device.id, subscription(await body(req), store.now()));
+            return json({ ok: true }, 201);
+          }
+          if (path === "/api/push/subscription" && req.method === "DELETE") {
+            const b = await body(req);
+            await store.removeSubscription(device.id, endpoint(b.endpoint));
+            return new Response(null, { status: 204 });
+          }
+          if (path === "/api/push/test" && req.method === "POST") {
+            const b = await body(req);
+            if (Object.keys(b).length) throw invalid();
+            await push.send(device.id, { title: "Herdr", body: "Notifications are on", tag: randomBytes(16).toString("hex"), url: "/" });
+            return json({ ok: true }, 202);
           }
           if (path === "/api/state" && req.method === "GET")
             return json(await state.get());
@@ -475,6 +500,7 @@ export function start(
     state,
     store,
     core,
+    push,
     stop() {
       events?.close();
       clearInterval(interval);

@@ -24,7 +24,8 @@ export const invalid = () =>
   new Failure(400, "invalid_input", "Invalid request.");
 export const unauthorized = () =>
   new Failure(401, "unauthorized", "Pair this device to continue.");
-type Device = { id: string; label: string; createdAt: string; hash: string };
+export type Subscription = { endpoint: string; expirationTime: number | null; keys: { p256dh: string; auth: string } };
+export type Device = { id: string; label: string; createdAt: string; hash: string; subscription?: Subscription };
 type State = {
   version: 1;
   devices: Device[];
@@ -57,7 +58,8 @@ export class Store {
             typeof d.id !== "string" ||
             typeof d.label !== "string" ||
             !/^[a-f0-9]{64}$/.test(d.hash) ||
-            typeof d.createdAt !== "string",
+            typeof d.createdAt !== "string" ||
+            (d.subscription !== undefined && (!d.subscription || typeof d.subscription.endpoint !== "string" || !d.subscription.keys || typeof d.subscription.keys.p256dh !== "string" || typeof d.subscription.keys.auth !== "string" || (d.subscription.expirationTime !== null && !Number.isFinite(d.subscription.expirationTime)))),
         ) ||
         (s.pair &&
           (!/^[a-f0-9]{64}$/.test(s.pair.hash) ||
@@ -127,7 +129,9 @@ export class Store {
       });
       acquired = true;
       const s = await this.read();
+      const before = JSON.stringify(s);
       const result = await fn(s);
+      if (JSON.stringify(s) === before) return result;
       const path = join(this.dir, "state.json"),
         tmp = join(this.dir, `state.${randomBytes(8).toString("hex")}.tmp`);
       const file = await open(tmp, "wx", 0o600);
@@ -211,6 +215,27 @@ export class Store {
   }
   async list() {
     return (await this.read()).devices.map(publicDevice);
+  }
+  async subscription(id: string) {
+    const d = (await this.read()).devices.find(d => d.id === id);
+    if (!d) throw unauthorized();
+    return d.subscription;
+  }
+  async setSubscription(id: string, subscription: Subscription) {
+    return this.transact(s => {
+      const d = s.devices.find(d => d.id === id);
+      if (!d) throw unauthorized();
+      if (s.devices.some(other => other.id !== id && other.subscription?.endpoint === subscription.endpoint))
+        throw new Failure(409, "subscription_conflict", "Subscription belongs to another device.");
+      d.subscription = subscription;
+    });
+  }
+  async removeSubscription(id: string, endpoint: string) {
+    return this.transact(s => {
+      const d = s.devices.find(d => d.id === id);
+      if (!d) throw unauthorized();
+      if (d.subscription?.endpoint === endpoint) delete d.subscription;
+    });
   }
   async revoke(query: string) {
     return this.transact((s) => {
