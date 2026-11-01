@@ -70,3 +70,5 @@ export type ConversationPage = {
   turns: { id: string; entries: { id: string; role: "user" | "assistant" | "tool"; text: string }[] }[];
   nextCursor: string | null;
 };
+
+export type UploadedFile = { id: string; name: string; type: string; size: number; converted: boolean };

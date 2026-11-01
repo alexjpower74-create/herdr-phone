@@ -1,4 +1,4 @@
-import type { Frame, State, Screen, ConversationPage } from "./types";
+import type { Frame, State, Screen, ConversationPage, UploadedFile } from "./types";
 const TOKEN_KEY = "herdr-phone.device";
 export class ApiError extends Error {
   constructor(
@@ -30,15 +30,16 @@ export class Client {
     method = body === undefined ? "GET" : "POST",
     signal?: AbortSignal,
   ): Promise<T> {
+    const multipart = body instanceof FormData;
     const response = await fetch(`/api${path}`, {
       method,
       signal,
       cache: "no-store",
       headers: {
         ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(body !== undefined && !multipart ? { "Content-Type": "application/json" } : {}),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: multipart ? body : body === undefined ? undefined : JSON.stringify(body),
     });
     if (!response.ok) {
       const data = await response.json().catch(() => null);
@@ -69,20 +70,27 @@ export class Client {
     const query = before ? `?before=${encodeURIComponent(before)}` : "";
     return this.request<ConversationPage>(`/terminals/${encodeURIComponent(id)}/conversation${query}`, undefined, "GET", signal);
   }
-  action(id: string, kind: "send" | "keys" | "prompt", body: unknown) {
+  upload(id: string, file: File, signal: AbortSignal) {
+    const body = new FormData();
+    body.append("file", file);
+    return this.request<{ upload: UploadedFile }>(`/terminals/${encodeURIComponent(id)}/uploads`, body, "POST", signal);
+  }
+  action(id: string, kind: "send" | "keys" | "prompt", body: unknown, signal?: AbortSignal) {
     const epoch = this.epochs.get(id) ?? 0;
     const next = (this.queues.get(id) ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
-        if (epoch !== (this.epochs.get(id) ?? 0))
+        if (signal?.aborted || epoch !== (this.epochs.get(id) ?? 0))
           throw new Error(
             "Pending input was cancelled. Check the terminal before sending again.",
           );
         const result = await this.request(
           `/terminals/${encodeURIComponent(id)}/${kind}`,
           body,
+          "POST",
+          signal,
         );
-        if (epoch !== (this.epochs.get(id) ?? 0))
+        if (signal?.aborted || epoch !== (this.epochs.get(id) ?? 0))
           throw new Error("Delivery outcome is unknown after disconnection.");
         return result;
       })
