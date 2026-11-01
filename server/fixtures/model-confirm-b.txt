@@ -1,0 +1,7 @@
+  Switch model?
+  Your next response will be slower and use more tokens
+
+  This conversation is cached for the current model. Switching to Model A (default) means the full history gets re-read.
+
+  ❯ 1. Yes, switch to Model A (default)
+    2. No, go back

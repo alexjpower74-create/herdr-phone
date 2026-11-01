@@ -20,8 +20,31 @@ export function detectPrompt(
   while (lines.length && !lines.at(-1)!.trim()) lines.pop();
   let kind: Prompt["kind"];
   let heading = -1;
-  let family: "a" | "b" = "a";
+  let family: "a" | "b" | "confirmation" = "a";
+  let confirmationModel = "";
   for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\s*Switch model\?\s*$/.test(lines[i]) && status === "done") {
+      const content = lines
+        .slice(i + 1)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const cached = content[1]?.match(
+        /^This conversation is cached for the current model\. Switching to (.+) means the full history gets re-read\.$/,
+      );
+      if (
+        content.length !== 4 ||
+        content[0] !==
+          "Your next response will be slower and use more tokens" ||
+        !cached
+      )
+        return null;
+      confirmationModel = cached[1];
+      heading = i;
+      kind = "menu";
+      family = "confirmation";
+      break;
+    }
+
     if (
       /^\s*Would you like to run the following command\?\s*$/.test(lines[i])
     ) {
@@ -111,6 +134,14 @@ export function detectPrompt(
   )
     return null;
   if (family === "b" && !footer) return null;
+  if (
+    family === "confirmation" &&
+    (options.length !== 2 ||
+      options[0].label !== `Yes, switch to ${confirmationModel}` ||
+      options[1].label !== "No, go back")
+  )
+    return null;
+
   const selected = options.findIndex((o) => o.selected);
   return {
     id: digest(screenId + ":" + kind!),
