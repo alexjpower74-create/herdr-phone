@@ -140,6 +140,7 @@ test("multipart envelope, exact-one-file,20MiB input and32KiB JSON limits remain
     expect((await request("uploads", {})).status).toBe(400);
     expect((await request("uploads?path=arbitrary", duplicate)).status).toBe(400);
     expect((await request("send", { text: "x".repeat(32769) })).status).toBe(413);
+    expect((await request("send", { text: "valid", extra: "x".repeat(32769) })).status).toBe(413);
     expect((await upload("ok")).status).toBe(201);
   });
 });
@@ -168,6 +169,8 @@ test("device byte/file quotas and machine file quota reserve atomically", async 
     expect((await upload("over bytes")).status).toBe(429);
     await store.transact((s: any) => s.uploads = records(1024, 1));
     expect((await upload("over device count")).status).toBe(429);
+    await store.transact((s: any) => s.uploads = records(103, MAX_UPLOAD, second.device.id));
+    expect((await upload("over machine bytes")).status).toBe(429);
     await store.transact((s: any) => s.uploads = records(4096, 1, second.device.id));
     expect((await upload("over machine count")).status).toBe(429);
     await store.transact((s: any) => s.uploads = []);
@@ -403,4 +406,14 @@ test("owned processing children have exited when cancellation drain resolves", a
     expect((await result).code).toBe("upload_unavailable");
     expect(() => process.kill(pid, 0)).toThrow();
   } finally { await runner.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("expiry and eight-ID bound reject input even while terminal incarnation remains valid", async () => {
+  await harness(async ({ upload, request, calls, advance }: any) => {
+    const file = (await (await upload("expires")).json()).upload;
+    expect((await request("send", { text: "", uploads: Array.from({ length: 9 }, (_, i) => i.toString(16).padStart(48, "0")) })).status).toBe(409);
+    advance(UPLOAD_LIFETIME + 1);
+    expect((await request("send", { text: "", uploads: [file.id] })).status).toBe(409);
+    expect(calls.filter((c: any) => c.method === "terminal.send")).toHaveLength(0);
+  });
 });
