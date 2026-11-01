@@ -197,22 +197,25 @@ try {
       await page.getByRole("button", { name: "Conversation", exact: true }).tap();
       const panel = page.locator(".conversation");
       await panel.getByText("Message 125: review this saved conversation.", { exact: true }).waitFor();
+      const first = panel.getByText("Message 001: review this saved conversation.", { exact: true });
+      const firstVisible = async () => {
+        if (!await first.count()) return false;
+        return first.evaluate((el: HTMLElement) => {
+          const r = el.getBoundingClientRect(), box = el.closest(".conversation")!.getBoundingClientRect();
+          const x = Math.min(r.right - 2, Math.max(r.left + 2, (r.left + r.right) / 2));
+          const y = Math.max(r.top + 2, box.top + 2);
+          return y < Math.min(r.bottom, box.bottom) && el.contains(document.elementFromPoint(x, y));
+        });
+      };
       for (let attempt = 0; attempt < 12; attempt++) {
-        if (await panel.getByText("Message 001: review this saved conversation.", { exact: true }).isVisible()) break;
+        if (await firstVisible()) break;
         const box = await panel.boundingBox(); assert(box);
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.wheel(0, -100000);
         await page.waitForTimeout(400);
       }
-      const first = panel.getByText("Message 001: review this saved conversation.", { exact: true });
       await first.waitFor();
-      const visible = await first.evaluate((el: HTMLElement) => {
-        const r = el.getBoundingClientRect(), box = el.closest(".conversation")!.getBoundingClientRect();
-        const x = Math.min(r.right - 2, Math.max(r.left + 2, (r.left + r.right) / 2));
-        const y = Math.max(r.top + 2, box.top + 2);
-        return y < Math.min(r.bottom, box.bottom) && el.contains(document.elementFromPoint(x, y));
-      });
-      assert(visible, "First message is not actually visible after real scrolling");
+      assert(await firstVisible(), "First message is not actually visible after real scrolling");
       assert.equal(await panel.locator('[data-role="user"]').count(), 125);
       assert.equal(await panel.locator('[data-role="tool"]').count(), 125);
       assert(!await panel.evaluate((el: HTMLElement) => el.scrollWidth > el.clientWidth + 1));
