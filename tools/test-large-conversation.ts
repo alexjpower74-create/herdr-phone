@@ -15,6 +15,8 @@ const report: any = {
 };
 const MiB = 1024 * 1024;
 const targetBytes = 300 * MiB;
+const scratch = new Set<string>();
+let liveClosed = true;
 function texts(page: ConversationPage) {
   return page.turns.flatMap(turn => turn.entries.filter(entry => entry.role === "user").map(entry => entry.text));
 }
@@ -26,6 +28,7 @@ function record(format: "messages" | "responses", n: number, role: "user" | "ass
 }
 async function generated(format: "messages" | "responses") {
   const root = await mkdtemp(join(tmpdir(), "phone-large-history-"));
+  scratch.add(root);
   const path = join(root, "large-check.jsonl"), config = join(root, "config.json");
   const file = await open(path, "w+"), calls: string[] = [];
   let bytes = 0, source: ReturnType<typeof transcriptSource> | undefined;
@@ -65,10 +68,14 @@ async function generated(format: "messages" | "responses") {
       calls.push(method); assert.equal(method, "terminal.get", "Proof must not observe or modify a terminal");
       return { state: "live", pid: 1, created_ms: 1, foreground: { pid: process.pid, cwd: process.cwd() } };
     } }, config);
+    const check: any = { format, bytes };
+    report.checks.push(check);
     const started = performance.now();
-    let page = await source("t1");
-    const latestMs = performance.now() - started;
-    report.checks.push({ format, bytes, latestMs, latestTurns: page.turns.length });
+    let page: ConversationPage;
+    try { page = await source("t1"); }
+    finally { check.latestMs = performance.now() - started; }
+    const latestMs = check.latestMs;
+    check.latestTurns = page.turns.length;
     assert.equal(page.available, true);
     assert(latestMs < 300, `Latest ${format} page took ${latestMs.toFixed(1)} ms; expected <300 ms`);
     assert.deepEqual(texts(page), Array.from({ length: 50 }, (_, i) => `Question ${76 + i}`));
@@ -91,12 +98,15 @@ async function generated(format: "messages" | "responses") {
     assert(calls.length > 0 && calls.every(method => method === "terminal.get"));
     Object.assign(report.checks.at(-1), { pages: pages.length, emptyWindows: pages.filter(p => !p.turns.length).length, exactUserMessages: ordered.length, uniqueEntries: entryIds.length, trimmingNotice: warned, terminalMethods: [...new Set(calls)] });
   } finally {
-    source?.close?.(); await file.close(); await rm(root, { recursive: true, force: true });
+    source?.close?.();
+    try { await file.close(); }
+    finally { await rm(root, { recursive: true, force: true }); scratch.delete(root); }
   }
 }
 async function live(terminal: string) {
   assert(/^(?:[A-Za-z0-9_-]+\/)?t[0-9a-z]+$/.test(terminal), "Invalid configured terminal address");
   const core = new Core(), methods: string[] = [];
+  liveClosed = false;
   const source = transcriptSource({ async call(method: string, params: unknown) {
     assert.equal(method, "terminal.get", "Live proof permits terminal metadata only");
     methods.push(method); return core.call(method, params);
@@ -118,7 +128,7 @@ async function live(terminal: string) {
     }
     assert(methods.length > 0 && methods.every(method => method === "terminal.get"));
     report.terminalMethods = [...new Set(methods)];
-  } finally { source.close?.(); core.close(); }
+  } finally { try { source.close?.(); } finally { core.close(); liveClosed = true; } }
 }
 try {
   const terminal = process.env.CONVERSATION_LARGE_LIVE_TERMINAL;
@@ -130,6 +140,7 @@ try {
   report.failure = { code: error?.code, message: String(error?.message || "Proof failed") };
   throw error;
 } finally {
+  report.cleaned = scratch.size === 0 && liveClosed;
   await writeFile(join(output, "proof.json"), JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify(report, null, 2));
 }
