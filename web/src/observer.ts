@@ -1,4 +1,5 @@
 import { Terminal, type ITerminalOptions } from "@xterm/xterm";
+import { remeasureTerminalFont } from "./terminal-font";
 import type { Frame } from "./types";
 
 type Output = Extract<Frame, { type: "output" }>;
@@ -77,6 +78,9 @@ export class ObserverDisplay {
       }
     }
     return index;
+  }
+  remeasureFont() {
+    if (this.staging) remeasureTerminalFont(this.staging);
   }
   unavailable() {
     this.failed = true;

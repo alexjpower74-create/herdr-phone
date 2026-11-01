@@ -68,3 +68,36 @@ test("leaving a terminal while fonts wait cancels its eventual open", async ({ p
   await expect(page.getByRole("heading", { name: "Spaces", exact: true })).toBeVisible();
   await expect(page.locator(".xterm")).toHaveCount(0);
 });
+
+test("later font loading remeasures the existing renderer and refits without new terminal input", async ({ page }) => {
+  const mock = await setup(page, true);
+  await expect.poll(mock.held).toBeGreaterThan(0);
+  mock.release();
+  await expect(page.locator(".terminal-canvas:not(.observer-staging) .xterm-rows")).toContainText("Readable terminal");
+  const before = await metrics(page);
+  await page.evaluate(async () => {
+    // Load a different local face under the terminal family to make stale metrics
+    // observable. This uses a genuine FontFaceSet loadingdone event.
+    for (const sheet of [...document.styleSheets]) {
+      for (const rule of [...sheet.cssRules]) {
+        if (!(rule instanceof CSSFontFaceRule) || !rule.style.fontFamily.includes("Geist") || rule.style.fontWeight !== "400") continue;
+        if (!rule.style.unicodeRange.includes("U+0-FF")) continue;
+        const match = rule.style.getPropertyValue("src").match(/url\(["']?([^"')]+)/);
+        if (!match) continue;
+        const face = new FontFace("JetBrains Mono", `url("${new URL(match[1], sheet.href ?? location.href)}")`, { weight: "400" });
+        document.fonts.add(face);
+        await face.load();
+        await document.fonts.ready;
+        return;
+      }
+    }
+    throw new Error("Local font fixture was not found");
+  });
+  await expect.poll(async () => Math.abs((await metrics(page)).cell - (await metrics(page)).glyph)).toBeLessThan(0.04);
+  const after = await metrics(page);
+  console.log("late font metrics", { before, after });
+  expect(Math.abs(after.cell - before.cell)).toBeGreaterThan(1);
+  expect(after.width).toBeLessThanOrEqual(366);
+  expect(after.text).toBe(before.text);
+  expect(mock.requests.every(request => request.startsWith("GET "))).toBe(true);
+});
