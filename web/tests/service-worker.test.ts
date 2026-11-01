@@ -52,6 +52,23 @@ describe("notification privacy and navigation", () => {
       }),
     );
   });
+  it.each([
+    "Workbench / Build needs you",
+    "Workbench finished",
+    "A terminal finished",
+  ])("preserves layout notification wording: %s", async (body) => {
+    const w = worker();
+    let done: Promise<unknown> | undefined;
+    w.listeners.get("push")!({
+      data: { json: () => ({ body, url: "/#terminal=t1" }) },
+      waitUntil: (p: Promise<unknown>) => (done = p),
+    });
+    await done;
+    expect(w.showNotification).toHaveBeenCalledWith(
+      "Herdr",
+      expect.objectContaining({ body }),
+    );
+  });
   it("opens the encoded terminal deep link in an existing window", async () => {
     const w = worker();
     let done: Promise<unknown> | undefined;

@@ -4,9 +4,8 @@ import "@fontsource/geist/400.css";
 import "@fontsource/geist/500.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "./style.css";
-import { Client } from "./client";
-import { choices } from "./prompts";
-import type { State, Space, Tab, TerminalInfo, Frame } from "./types";
+import { ApiError, Client } from "./client";
+import type { State, Space, Tab, TerminalInfo, Frame, Prompt } from "./types";
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const client = new Client();
 let state: State | undefined,
@@ -18,9 +17,25 @@ let emulator: Terminal | undefined,
   decoder = new TextDecoder(),
   connected = false;
 let currentText = "",
+  currentPrompt: Prompt | null = null,
   usedPrompt = "",
   screenGeneration = 0;
 let appEpoch = 0;
+const drafts = new Map<string, { text: string; revision: number }>();
+const pending = new Set<string>();
+function draft(id: string) {
+  if (!drafts.has(id)) drafts.set(id, { text: "", revision: 0 });
+  return drafts.get(id)!;
+}
+function updateCompose() {
+  const input = root.querySelector<HTMLTextAreaElement>(".terminal-input");
+  const submit = root.querySelector<HTMLButtonElement>(".compose-send");
+  if (active && input && submit) {
+    input.value = draft(active.id).text;
+    submit.disabled = pending.has(active.id) || !connected || !input.value;
+    submit.textContent = pending.has(active.id) ? "Sending…" : "Send";
+  }
+}
 const folded = new Set<string>();
 function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -296,14 +311,14 @@ function showTerminal(desired?: string) {
     ["Enter", "enter"],
     ["^C", "ctrl+c"],
   ]) {
-    const b = button(label, () => send("keys", [key]));
+    const b = button(label, () => keyAction(key));
     b.setAttribute("aria-label", key);
     b.onpointerdown = (e) => {
       e.preventDefault();
-      send("keys", [key]);
+      keyAction(key);
     };
     b.onclick = (e) => {
-      if (e.detail === 0) send("keys", [key]);
+      if (e.detail === 0) keyAction(key);
     };
     keys.append(b);
   }
@@ -314,39 +329,29 @@ function showTerminal(desired?: string) {
   input.autocapitalize = "off";
   input.autocomplete = "off";
   input.spellcheck = false;
-  input.addEventListener("input", (e) => {
-    if ((e as InputEvent).isComposing) return;
-    if (input.value) {
-      send("input", input.value);
-      input.value = "";
-    } else if ((e as InputEvent).inputType === "deleteContentBackward")
-      send("keys", ["backspace"]);
+  const idForDraft = active.id;
+  input.value = draft(idForDraft).text;
+  input.placeholder = "Compose a message…";
+  input.addEventListener("input", () => {
+    const saved = draft(idForDraft);
+    saved.text = input.value;
+    saved.revision++;
+    updateCompose();
   });
-  input.addEventListener("compositionend", () => {
-    if (input.value) {
-      send("input", input.value);
-      input.value = "";
-    }
-  });
-  input.onkeydown = (e) => {
-    const key = (
-      {
-        Enter: "enter",
-        Backspace: "backspace",
-        ArrowUp: "up",
-        ArrowDown: "down",
-        ArrowLeft: "left",
-        ArrowRight: "right",
-        Escape: "esc",
-        Tab: e.shiftKey ? "shift+tab" : "tab",
-      } as Record<string, string>
-    )[e.key];
-    if (key && !e.isComposing) {
-      e.preventDefault();
-      send("keys", [key]);
+  input.onkeydown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      void submitDraft(idForDraft);
     }
   };
-  dock.append(keys, input);
+  const compose = element("div", "compose");
+  const submit = button(
+    "Send",
+    () => void submitDraft(idForDraft),
+    "primary compose-send",
+  );
+  compose.append(input, submit);
+  dock.append(keys, compose);
   root.append(dock);
   emulator = new Terminal({
     cols: active.cols,
@@ -365,7 +370,9 @@ function showTerminal(desired?: string) {
   resize = new ResizeObserver(() => scaleTerminal());
   resize.observe(viewport);
   scaleTerminal();
+  updateCompose();
   currentText = "";
+  currentPrompt = null;
   usedPrompt = "";
   decoder = new TextDecoder();
   const id = active.id,
@@ -376,7 +383,12 @@ function showTerminal(desired?: string) {
     .then((screen) => {
       if (active?.id !== id || generation !== screenGeneration) return;
       active = screen.terminal;
-      paint(screen.text, screen.terminal.cols, screen.terminal.rows);
+      paint(
+        screen.text,
+        screen.terminal.cols,
+        screen.terminal.rows,
+        screen.prompt,
+      );
     })
     .catch((e) => notice((e as Error).message));
 }
@@ -420,7 +432,13 @@ function dimensions(cols: number, rows: number) {
     emulator.resize(cols, rows);
   updateTerminalInfo();
 }
-function paint(text: string, cols: number, rows: number) {
+function paint(
+  text: string,
+  cols: number,
+  rows: number,
+  prompt: Prompt | null = null,
+) {
+  currentPrompt = prompt;
   dimensions(cols, rows);
   if (!emulator) return;
   currentText = text;
@@ -440,42 +458,152 @@ function paint(text: string, cols: number, rows: number) {
   renderChoices();
 }
 function renderChoices() {
-  const area = document.querySelector("#approvals");
+  const area = document.querySelector<HTMLElement>("#approvals");
   if (!area) return;
+  if (
+    !connected ||
+    !active ||
+    !currentPrompt ||
+    currentPrompt.id === usedPrompt
+  ) {
+    area.replaceChildren();
+    delete area.dataset.prompt;
+    return;
+  }
+  const id = active.id;
+  const prompt = currentPrompt;
+  const identity = JSON.stringify([id, prompt.id]);
+  if (area.dataset.prompt === identity) return;
   area.replaceChildren();
-  if (!active || currentText === usedPrompt) return;
-  for (const choice of choices(currentText, active.status)) {
-    const id = active.id,
-      prompt = currentText;
+  area.dataset.prompt = identity;
+  for (const choice of prompt.options) {
     area.append(
       button(
         choice.label,
-        () => {
-          if (active?.id !== id || currentText !== prompt) return;
-          usedPrompt = prompt;
-          area.replaceChildren();
-          send("keys", choice.keys);
+        async () => {
+          if (
+            !connected ||
+            currentPrompt?.id !== prompt.id ||
+            usedPrompt === prompt.id
+          )
+            return;
+          usedPrompt = prompt.id;
+          renderChoices();
+          try {
+            await client.action(id, "prompt", {
+              promptId: prompt.id,
+              optionId: choice.id,
+            });
+          } catch (error) {
+            notice(
+              `${(error as Error).message} Choice was not replayed; refresh the dialog before choosing again.`,
+            );
+            if (active?.id === id) await refreshScreen(id);
+          }
         },
         "approval",
       ),
     );
   }
 }
-function send(kind: "input" | "keys", value: string | string[]) {
-  if (!active || !connected) {
-    notice("Connection unavailable. Input was not sent.");
-    return;
+async function refreshScreen(id: string) {
+  const generation = screenGeneration;
+  try {
+    const screen = await client.screen(id);
+    if (active?.id !== id || generation !== screenGeneration) return;
+    active = screen.terminal;
+    paint(
+      screen.text,
+      screen.terminal.cols,
+      screen.terminal.rows,
+      screen.prompt,
+    );
+    return screen;
+  } catch (error) {
+    notice((error as Error).message);
   }
+}
+function keyAction(key: string) {
+  if (!active || !connected)
+    return notice("Connection unavailable. Input was not sent.");
+  if (key === "enter" && draft(active.id).text)
+    return void submitDraft(active.id);
   const id = active.id;
-  usedPrompt = currentText;
-  renderChoices();
-  client
-    .input(id, kind, value)
-    .catch((e) =>
+  void client
+    .action(id, "keys", { keys: [key] })
+    .catch((error) =>
       notice(
-        `${(e as Error).message} Input was not replayed; check the terminal before continuing.`,
+        `${(error as Error).message} Input was not replayed. Earlier delivery may be unknown; check the terminal before continuing.`,
       ),
     );
+}
+async function submitDraft(id: string, forceScreenId?: string) {
+  if (pending.has(id)) return;
+  if (!connected)
+    return notice(
+      "Connection unavailable. Draft retained; nothing was replayed.",
+    );
+  const saved = draft(id);
+  const text = saved.text;
+  const revision = saved.revision;
+  if (!text) return;
+  pending.add(id);
+  updateCompose();
+  try {
+    await client.action(id, "send", {
+      text,
+      ...(forceScreenId ? { force: true, screenId: forceScreenId } : {}),
+    });
+    if (saved.revision === revision) {
+      saved.text = "";
+      saved.revision++;
+    }
+  } catch (error) {
+    notice(
+      `${(error as Error).message} Draft retained. Delivery may be unknown; check the terminal before sending again.`,
+    );
+    if (
+      error instanceof ApiError &&
+      error.code === "terminal_blocked" &&
+      !forceScreenId &&
+      active?.id === id
+    ) {
+      const screen = await refreshScreen(id);
+      if (screen && active?.id === id && connected) {
+        const dialog = modal("Terminal is waiting for a choice");
+        dialog.append(element("pre", "blocked-screen", screen.text));
+        dialog.append(
+          element(
+            "p",
+            "muted",
+            "Sending this draft may answer the current dialog.",
+          ),
+        );
+        dialog.append(
+          button(
+            "Send anyway",
+            async () => {
+              dialog.close();
+              // Refresh after deliberate confirmation, then let the bridge revalidate at dispatch.
+              const fresh = await refreshScreen(id);
+              if (!fresh || active?.id !== id || !connected) return;
+              if (fresh.screenId !== screen.screenId) {
+                notice(
+                  "The dialog changed. Draft retained; review the current dialog before sending again.",
+                );
+                return;
+              }
+              void submitDraft(id, fresh.screenId);
+            },
+            "primary",
+          ),
+        );
+      }
+    }
+  } finally {
+    pending.delete(id);
+    updateCompose();
+  }
 }
 function frame(message: Frame) {
   if (message.type === "state") {
@@ -508,15 +636,17 @@ function frame(message: Frame) {
       client.cancelPending();
       if (active)
         notice(
-          "Connection lost. Pending input was cancelled; check the terminal before continuing.",
+          "Connection lost. Pending input was cancelled. Delivery may be unknown; drafts retained. Check the terminal before continuing.",
         );
     }
     updateTerminalInfo();
+    updateCompose();
+    renderChoices();
     if (changed && !space) home();
   }
   if (message.type === "screen" && message.terminalId === active?.id) {
     screenGeneration++;
-    paint(message.text, message.cols, message.rows);
+    paint(message.text, message.cols, message.rows, message.prompt);
   }
   if (
     message.type === "output" &&
@@ -591,28 +721,49 @@ function newSpace(
   name.setAttribute("aria-label", "Space name");
   name.required = true;
   name.maxLength = 100;
+  name.value = "New space";
   const cwd = element("input");
   cwd.placeholder = "Working directory";
   cwd.setAttribute("aria-label", "Working directory");
   cwd.required = true;
   cwd.autocapitalize = "off";
   cwd.spellcheck = false;
+  const defaultDirectory = () => {
+    cwd.value =
+      (space?.machineId === machine.value ? space.cwd : undefined) ||
+      state?.spaces.find((item) => item.machineId === machine.value && item.cwd)
+        ?.cwd ||
+      "";
+  };
+  defaultDirectory();
+
   const program = element("select");
   program.setAttribute("aria-label", "Program");
-  for (const p of state.programs) {
-    const option = element("option", "", p.name);
-    option.value = p.id;
-    program.append(option);
-  }
   const submit = element("button", "primary", "Create space");
   submit.type = "submit";
-  submit.disabled = !state.programs.length;
+  const updatePrograms = () => {
+    program.replaceChildren();
+    for (const p of state!.programs.filter(
+      (item) => item.machineId === machine.value,
+    )) {
+      const option = element("option", "", p.name);
+      option.value = p.id;
+      program.append(option);
+    }
+    submit.disabled = !program.options.length;
+  };
+  updatePrograms();
+  machine.onchange = () => {
+    defaultDirectory();
+    updatePrograms();
+  };
   const error = element("p", "form-error");
   error.role = "alert";
   form.append(machine, name, cwd, program, submit, error);
   dialog.append(form);
   form.onsubmit = async (e) => {
     e.preventDefault();
+    if (submit.disabled) return;
     submit.disabled = true;
     try {
       const result = await client.request<{
@@ -701,10 +852,12 @@ async function start() {
       connected = value;
       if (!value && active)
         notice(
-          "Connection lost. Pending input was cancelled; check the terminal before continuing.",
+          "Connection lost. Pending input was cancelled. Delivery may be unknown; drafts retained. Check the terminal before continuing.",
         );
       if (changed && !space) home();
       else updateTerminalInfo();
+      updateCompose();
+      renderChoices();
     };
     client.connect();
     frame({ type: "state", state });

@@ -15,7 +15,9 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification("Herdr", {
       body:
-        payload.body === "A turn finished"
+        typeof payload.body === "string" &&
+        payload.body.length <= 240 &&
+        /^[^\x00-\x1f\x7f]+ (?:needs you|finished)$/.test(payload.body)
           ? payload.body
           : "A terminal needs you",
       tag: payload.tag,
