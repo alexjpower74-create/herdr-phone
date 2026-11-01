@@ -34,7 +34,7 @@ async function setup(page: Page, preference: string | null = null, deepLink = fa
   if (!deepLink) await page.getByRole("button", { name: "W Workbench", exact: true }).tap();
   return { model, publishMenu: () => {
     prompt = { id: "menu", kind: "menu", options: [{ id: "quick", label: "Quick option", keys: ["enter"] }] };
-    for (const ws of model.sockets) ws.send(JSON.stringify(screen()));
+    for (const ws of model.sockets) ws.send(JSON.stringify({ type: "screen", terminalId: "t1", cols: 100, rows: 30, text: "Choose an option.", screenId: prompt.id, prompt }));
   } };
 }
 async function conversation(page: Page) {
@@ -81,9 +81,18 @@ test("default Conversation follows live replies, preserves scroll-up and support
   const box = await host.boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await page.mouse.wheel(0, -600);
-  await page.waitForTimeout(350);
-  const prior = await host.evaluate(el => el.scrollTop);
-  expect(await host.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeGreaterThan(300);
+  await expect.poll(() => host.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeGreaterThan(300);
+  const prior = await host.evaluate(async el => {
+    let previous = el.scrollTop, stable = 0;
+    for (let frames = 0; frames < 120; frames++) {
+      await new Promise(requestAnimationFrame);
+      const current = el.scrollTop;
+      stable = Math.abs(current - previous) < 0.5 ? stable + 1 : 0;
+      if (stable >= 4) return current;
+      previous = current;
+    }
+    throw new Error("Scroll did not settle");
+  });
   model.data.push(turn(21));
   await expect(host.locator('[data-entry="reply-21"]')).toBeAttached({ timeout: 6000 });
   expect(Math.abs(await host.evaluate(el => el.scrollTop) - prior)).toBeLessThan(2);
