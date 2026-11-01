@@ -68,7 +68,7 @@ type State = {
 };
 type Machine = {
   id: string; // "local", or the configured remote alias
-  name: string; // "This computer" locally, configured alias remotely
+  name: string; // configured local label, capitalized remote alias for display
   online: boolean;
 };
 type Space = {
@@ -94,6 +94,10 @@ type Program = { id: string; name: string; machineId: string };
 ```
 
 Preserve document space/tab order, local machine first then remote aliases.
+The local display name comes from `HERDR_PHONE_LOCAL_NAME` (trimmed, default
+`This computer` when absent or blank). Capitalize the first character of each
+remote alias for display only; machine ids and qualified terminal addresses
+retain the original alias exactly.
 The bridge reads each core's `herdr-app` document through `doc.get`, and joins
 its terminal ids with `terminal.list`/`events.subscribe`. Remote addresses
 remain qualified throughout. Include empty spaces; exclude temporary machines.

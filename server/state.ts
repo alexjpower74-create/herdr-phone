@@ -104,12 +104,16 @@ export class Snapshot {
       this.colors(),
     ]);
     const machines = [
-      { id: "local", name: "This computer", online: true },
+      {
+        id: "local",
+        name: process.env.HERDR_PHONE_LOCAL_NAME?.trim() || "This computer",
+        online: true,
+      },
       ...(machineList.machines || [])
         .filter((m: any) => !m.temporary)
         .map((m: any) => ({
           id: m.name,
-          name: m.name,
+          name: m.name.charAt(0).toUpperCase() + m.name.slice(1),
           online: m.state === "connected",
         })),
     ];

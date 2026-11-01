@@ -29,6 +29,7 @@ privately under `~/.config/herdr-phone/`; only token hashes are retained.
 |---|---|---|
 | `HERDR_PHONE_PORT` | `8790` | Loopback listening port |
 | `HERDR_PHONE_ORIGIN` | Loopback HTTP origin | Exact allowed browser origin |
+| `HERDR_PHONE_LOCAL_NAME` | `This computer` | Local machine group display name |
 | `HERDR_PHONE_CONFIG_DIR` | `~/.config/herdr-phone/` | Private device state |
 | `HERDR_PHONE_STATIC_DIR` | `web/dist` | Built web app |
 | `HERDR_PHONE_HC` | `hc` | Core client executable |
