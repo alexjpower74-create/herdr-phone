@@ -15,6 +15,7 @@ export class TerminalPull {
     document.addEventListener("visibilitychange", this.cancel);
   }
   reset = () => {
+    if (this.consumed) this.suppressUntil = performance.now() + 800;
     this.start = undefined;
     this.distance = 0;
     this.consumed = false;
