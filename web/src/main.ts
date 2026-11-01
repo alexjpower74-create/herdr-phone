@@ -458,12 +458,24 @@ function paint(
   renderChoices();
 }
 function renderChoices() {
-  const area = document.querySelector("#approvals");
+  const area = document.querySelector<HTMLElement>("#approvals");
   if (!area) return;
-  area.replaceChildren();
-  if (!active || !currentPrompt || currentPrompt.id === usedPrompt) return;
+  if (
+    !connected ||
+    !active ||
+    !currentPrompt ||
+    currentPrompt.id === usedPrompt
+  ) {
+    area.replaceChildren();
+    delete area.dataset.prompt;
+    return;
+  }
   const id = active.id;
   const prompt = currentPrompt;
+  const identity = JSON.stringify([id, prompt.id]);
+  if (area.dataset.prompt === identity) return;
+  area.replaceChildren();
+  area.dataset.prompt = identity;
   for (const choice of prompt.options) {
     area.append(
       button(
@@ -629,6 +641,7 @@ function frame(message: Frame) {
     }
     updateTerminalInfo();
     updateCompose();
+    renderChoices();
     if (changed && !space) home();
   }
   if (message.type === "screen" && message.terminalId === active?.id) {
@@ -844,6 +857,7 @@ async function start() {
       if (changed && !space) home();
       else updateTerminalInfo();
       updateCompose();
+      renderChoices();
     };
     client.connect();
     frame({ type: "state", state });

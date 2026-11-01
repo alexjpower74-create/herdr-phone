@@ -866,10 +866,14 @@ test("ten long menu options scroll within choices while keybar and compose remai
       ),
     ).toBe(true);
   };
-  for (let selected = 0; selected < labels.length; selected++) {
-    const promptId = `large-menu-${selected}`;
-    sockets[0].send(
-      JSON.stringify({
+  let repeatedFrame = "";
+  const repeats = setInterval(() => {
+    if (repeatedFrame) sockets[0].send(repeatedFrame);
+  }, 100);
+  try {
+    for (let selected = 0; selected < labels.length; selected++) {
+      const promptId = `large-menu-${selected}`;
+      repeatedFrame = JSON.stringify({
         type: "screen",
         terminalId: "t1",
         cols: 100,
@@ -885,63 +889,109 @@ test("ten long menu options scroll within choices while keybar and compose remai
             keys: Array(index).fill("down").concat("enter"),
           })),
         },
-      }),
-    );
-    const area = page.locator("#approvals");
-    const option = page.getByRole("button", {
-      name: labels[selected],
-      exact: true,
-    });
-    await expect(option).toBeVisible();
-    expect(
-      await area.evaluate(
-        (element) => element.scrollHeight > element.clientHeight,
-      ),
-    ).toBe(true);
-    await hitControls();
-    const bounds = await area.boundingBox();
-    expect(bounds).not.toBeNull();
-    await page.mouse.move(
-      bounds!.x + bounds!.width / 2,
-      bounds!.y + bounds!.height / 2,
-    );
-    // Drive the scroll container with real input; no scrollIntoView/scrollTop assignment.
-    await page.mouse.wheel(0, -2000);
-    const reachable = () =>
-      option.evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        const parent = element.parentElement!.getBoundingClientRect();
-        const y = rect.y + rect.height / 2;
-        const hit = document.elementFromPoint(rect.x + rect.width / 2, y);
-        return (
-          y > parent.top &&
-          y < parent.bottom &&
-          (hit === element || (hit !== null && element.contains(hit)))
-        );
       });
-    for (let step = 0; step < 12 && !(await reachable()); step++) {
-      await page.mouse.wheel(0, 80);
-      await page.waitForTimeout(40);
+      sockets[0].send(repeatedFrame);
+      const area = page.locator("#approvals");
+      const option = page.getByRole("button", {
+        name: labels[selected],
+        exact: true,
+      });
+      await expect(option).toBeVisible();
+      const originalOption = await option.elementHandle();
+      expect(
+        await area.evaluate(
+          (element) => element.scrollHeight > element.clientHeight,
+        ),
+      ).toBe(true);
+      await hitControls();
+      const bounds = await area.boundingBox();
+      expect(bounds).not.toBeNull();
+      await page.mouse.move(
+        bounds!.x + bounds!.width / 2,
+        bounds!.y + bounds!.height / 2,
+      );
+      // Drive the scroll container with real input; no scrollIntoView/scrollTop assignment.
+      await page.mouse.wheel(0, -2000);
+      const reachable = () =>
+        option.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const parent = element.parentElement!.getBoundingClientRect();
+          const y = rect.y + rect.height / 2;
+          const hit = document.elementFromPoint(rect.x + rect.width / 2, y);
+          return (
+            y > parent.top &&
+            y < parent.bottom &&
+            (hit === element || (hit !== null && element.contains(hit)))
+          );
+        });
+      for (let step = 0; step < 12 && !(await reachable()); step++) {
+        await page.mouse.wheel(0, 80);
+        await page.waitForTimeout(40);
+      }
+      // Repeated identical bridge snapshots must not reset the user's scroll position.
+      await page.waitForTimeout(220);
+      expect(
+        await originalOption!.evaluate((element) => element.isConnected),
+      ).toBe(true);
+      expect(await reachable()).toBe(true);
+      await hitControls();
+      if (selected === 0 || selected === labels.length - 1)
+        await capture(page, `large-menu-${selected}`);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= 390),
+      ).toBe(true);
+      await option.tap();
+      await expect
+        .poll(
+          () => calls.filter((call) => call.path.endsWith("/prompt")).length,
+        )
+        .toBe(selected + 1);
+      expect(
+        calls.filter((call) => call.path.endsWith("/prompt"))[selected].body,
+      ).toEqual({
+        promptId,
+        optionId: `option-${selected}`,
+      });
+      await page.waitForTimeout(220);
+      await expect(area.getByRole("button")).toHaveCount(0);
     }
-    expect(await reachable()).toBe(true);
-    await hitControls();
-    if (selected === 0 || selected === labels.length - 1)
-      await capture(page, `large-menu-${selected}`);
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth <= 390),
-    ).toBe(true);
-    await option.tap();
-    await expect
-      .poll(() => calls.filter((call) => call.path.endsWith("/prompt")).length)
-      .toBe(selected + 1);
-    expect(
-      calls.filter((call) => call.path.endsWith("/prompt"))[selected].body,
-    ).toEqual({
-      promptId,
-      optionId: `option-${selected}`,
-    });
+  } finally {
+    clearInterval(repeats);
   }
   expect(calls.filter((call) => call.path.endsWith("/prompt"))).toHaveLength(
     10,
   );
+});
+
+test("prompt choices disappear on disconnect and consumed prompts stay hidden", async ({
+  page,
+}) => {
+  const { sockets } = await setup(page);
+  await open(page);
+  sockets[0].send(JSON.stringify({ type: "connection", connected: false }));
+  await expect(page.locator("#approvals button")).toHaveCount(0);
+  sockets[0].send(JSON.stringify({ type: "connection", connected: true }));
+  await page.getByRole("button", { name: "Yes", exact: true }).tap();
+  sockets[0].send(
+    JSON.stringify({
+      type: "screen",
+      terminalId: "t1",
+      cols: 100,
+      rows: 30,
+      text: prompt,
+      screenId: "screen-1",
+      prompt: suppliedPrompt,
+    }),
+  );
+  sockets[0].send(
+    JSON.stringify({
+      type: "error",
+      code: "probe",
+      message: "Repeated prompt processed",
+    }),
+  );
+  await expect(page.getByRole("status")).toHaveText(
+    "Repeated prompt processed",
+  );
+  await expect(page.locator("#approvals button")).toHaveCount(0);
 });
