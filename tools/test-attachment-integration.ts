@@ -73,7 +73,7 @@ while True:
 try {
   beforeFocus = focus(); assert((beforeFocus as any[]).every(Boolean));
   before = (await core.call("terminal.list", { all: true })).terminals;
-  remoteRoot = await remote("import tempfile;print(tempfile.mkdtemp(prefix='phone-attachment-'))");
+  remoteRoot = await remote("import tempfile,os;print(os.path.realpath(tempfile.mkdtemp(prefix='phone-attachment-')))");
   assert(remoteRoot.startsWith("/") && remoteRoot.includes("phone-attachment-"));
   const localUploads = join(scratch, "uploads"), remoteUploads = join(remoteRoot, "uploads");
   const testConfig = join(scratch, "machines.json");
@@ -83,8 +83,15 @@ try {
   execFileSync("magick", ["-size", "64x32", "xc:#24527d", photo], { stdio: "ignore" });
   execFileSync("magick", [photo, heic], { stdio: "ignore" });
   await writeFile(note, "Attachment text: caf\u00e9 and punctuation + ? !\n");
-  await writeFile(pdf, "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n");
-  const store = new Store(join(scratch, "device"));
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>"];
+  let pdfBody = "%PDF-1.4\n";
+  const offsets = [0];
+  for (let i = 0; i < objects.length; i++) { offsets.push(Buffer.byteLength(pdfBody)); pdfBody += `${i + 1} 0 obj\n${objects[i]}\nendobj\n`; }
+  const xref = Buffer.byteLength(pdfBody);
+  pdfBody += `xref\n0 4\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  await writeFile(pdf, pdfBody);
+  let now = Date.now();
+  const store = new Store(join(scratch, "device"), () => now);
   const paired = await store.exchange(await store.pairing(), "Upload check");
   const other = await store.exchange(await store.pairing(), "Other device");
   const rpc = { async call(method: string, params: any = {}) {
@@ -164,6 +171,21 @@ try {
     const final = await core.call("terminal.get", { terminal: id }); assert.deepEqual([final.cols, final.rows], size);
     await removeTerminal(id);
   }
+  const saved = (await store.read()).uploads || [];
+  assert.equal(saved.length, 7, "Expected two probe uploads plus five picker files");
+  await writeFile(join(localUploads, "keep.txt"), "Unrelated sentinel", { mode: 0o600 });
+  await remote("import pathlib,sys;p=pathlib.Path(sys.argv[1]);p.write_text('Unrelated sentinel');p.chmod(0o600)", [join(remoteUploads, "keep.txt")]);
+  now += 8 * 86400000;
+  await app.uploads.prune();
+  assert.equal((await store.read()).uploads?.length || 0, 0, "Expired upload metadata remains");
+  for (const item of saved) {
+    const path = join(item.root, item.date, item.filename);
+    const exists = item.machine === "local" ? await Bun.file(path).exists() : (await remote("import pathlib,sys;print(int(pathlib.Path(sys.argv[1]).exists()))", [path])) === "1";
+    assert(!exists, "Expired uploaded file remains");
+  }
+  assert.equal(await readFile(join(localUploads, "keep.txt"), "utf8"), "Unrelated sentinel");
+  assert.equal((await bytes(remoteAlias, join(remoteUploads, "keep.txt"))).toString(), "Unrelated sentinel");
+  record("Seven-day prune removes local and remote uploads but preserves unrelated files", { removed: saved.length });
   assert.deepEqual(focus(), beforeFocus);
   const after = (await core.call("terminal.list", { all: true })).terminals;
   for (const old of before) { const current = after.find((t: any) => t.address === old.address); if (current && old.state === "live") assert.deepEqual([current.cols, current.rows], [old.cols, old.rows]); }
