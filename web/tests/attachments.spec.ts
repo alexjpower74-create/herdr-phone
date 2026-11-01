@@ -5,7 +5,7 @@ const text = { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("A
 const terminal = { id: "t1", title: "Build", state: "live", status: "idle", cols: 80, rows: 24 };
 const state = { version: 1, revision: 1, machines: [{ id: "local", name: "This computer", online: true }], programs: [], spaces: [{ id: "sample", machineId: "local", name: "Sample", cwd: "", repo: null, branch: null, color: "#22a99a", tabs: [{ id: "build", name: "Build", terminals: [terminal] }, { id: "review", name: "Review", terminals: [{ ...terminal, id: "remote/t2" }] }] }] };
 async function setup(page: Page) {
-  const model = { uploads: [] as { name: string; bytes: Buffer; auth: string | undefined; path: string; type: string }[], sends: [] as { path: string; body: any }[], steps: [] as string[], hold: false, uploadStatus: 201, failAt: 1, blocked: false, screenId: "dialog", pending: undefined as Route | undefined, holdSend: false, pendingSend: undefined as Route | undefined, sockets: [] as WebSocketRoute[] };
+  const model = { uploads: [] as { name: string; bytes: Buffer; auth: string | undefined; path: string; type: string }[], sends: [] as { path: string; body: any }[], steps: [] as string[], hold: false, uploadStatus: 201, failAt: 1, blocked: false, screenId: "dialog", screenReads: 0, pending: undefined as Route | undefined, holdSend: false, pendingSend: undefined as Route | undefined, sockets: [] as WebSocketRoute[] };
   await page.addInitScript(() => {
     localStorage.setItem("herdr-phone.device", "test-device-token");
     const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(URL);
@@ -18,7 +18,10 @@ async function setup(page: Page) {
     const request = route.request(), url = new URL(request.url());
     if (url.pathname.endsWith("/conversation")) return route.fulfill({ json: { available: false, reason: "not_found", session: null, revision: "0", turns: [], nextCursor: null } });
     if (url.pathname === "/api/state") return route.fulfill({ json: state });
-    if (url.pathname.endsWith("/screen")) return route.fulfill({ json: { terminal: { ...terminal, id: decodeURIComponent(url.pathname.split("/")[3]) }, text: "Review the current choice", screenId: model.screenId, complete: true, prompt: null } });
+    if (url.pathname.endsWith("/screen")) {
+      model.screenReads++;
+      return route.fulfill({ json: { terminal: { ...terminal, id: decodeURIComponent(url.pathname.split("/")[3]) }, text: "Review the current choice", screenId: model.screenId, complete: true, prompt: null } });
+    }
     if (url.pathname.endsWith("/uploads")) {
       const body = await new Request(url, { method: "POST", headers: { "Content-Type": request.headers()["content-type"] }, body: request.postDataBuffer()! }).formData();
       expect([...body.keys()]).toEqual(["file"]);
@@ -80,7 +83,8 @@ test("picker selection remains local, previews and removable chips fit phone", a
 
 test("file-only Enter uploads exact bytes sequentially then sends IDs once", async ({ page }) => {
   const model = await setup(page);
-  await expect(page.locator(".terminal-canvas .xterm-rows")).toContainText("Review the current choice");
+  await expect.poll(() => model.screenReads).toBeGreaterThan(0);
+  await expect(page.locator(".conversation")).toBeVisible();
   // WebKit's request interception omits multipart file payloads. Bypass interception
   // for this proof and compare bytes actually received by the loopback HTTP fixture.
   await page.route("**/api/terminals/*/send", async route => {

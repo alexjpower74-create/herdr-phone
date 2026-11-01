@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 const terminal = { id: "t1", title: "Build", state: "live", status: "idle", cols: 56, rows: 37 };
 const state = { version: 1, revision: 1, machines: [{ id: "local", name: "This computer", online: true }], programs: [], spaces: [{ id: "sample", machineId: "local", name: "Sample", cwd: "", repo: null, branch: null, color: "#22a99a", tabs: [{ id: "build", name: "Build", terminals: [terminal] }] }] };
-async function setup(page: Page, stream: boolean, history = false, enterTerminal = true) {
+async function setup(page: Page, stream: boolean, history = false) {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   let held = 0, abort = false;
@@ -22,7 +22,7 @@ async function setup(page: Page, stream: boolean, history = false, enterTerminal
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "S Sample", exact: true }).tap();
-  if (enterTerminal) await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
+  await page.getByRole("button", { name: "Terminal view", exact: true }).tap();
   return { release, fail: () => { abort = true; release(); }, requests, held: () => held };
 }
 async function metrics(page: Page) {
@@ -133,9 +133,10 @@ test("failed font requests keep fallback usable without an unhandled rejection",
 });
 
 test("font arriving during Conversation is measured again when Mirror returns", async ({ page }) => {
-  const mock = await setup(page, true, false, false);
+  const mock = await setup(page, true);
   await expect.poll(mock.held).toBeGreaterThan(0);
   await expect(page.locator(".terminal-canvas:not(.observer-staging) .xterm-rows")).toContainText("Readable terminal", { timeout: 4000 });
+  await page.getByRole("button", { name: "Conversation", exact: true }).tap();
   await expect(page.locator(".conversation")).toBeVisible();
   mock.release();
   await page.evaluate(() => document.fonts.ready);
