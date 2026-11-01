@@ -18,6 +18,9 @@ export class Client {
   private stopped = false;
   private attempt = 0;
   private watched: string | null = null;
+  private history = 500;
+  watchId = "";
+  onWatch: (watchId: string, history: number) => void = () => {};
   onFrame: (frame: Frame) => void = () => {};
   onConnection: (connected: boolean) => void = () => {};
   onUnauthorized: () => void = () => {};
@@ -85,16 +88,19 @@ export class Client {
     this.queues.set(id, next);
     return next;
   }
-  watch(id: string | null) {
+  watch(id: string | null, history = 500) {
     this.watched = id;
+    this.history = history;
     this.sendWatch();
   }
   private sendWatch() {
-    if (this.socket?.readyState === WebSocket.OPEN)
-      this.socket.send(
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.watchId = crypto.randomUUID();
+    this.onWatch(this.watchId, this.history);
+    this.socket.send(
         JSON.stringify(
           this.watched
-            ? { type: "watch", terminalId: this.watched }
+            ? { type: "watch", terminalId: this.watched, watchId: this.watchId, history: this.history }
             : { type: "unwatch" },
         ),
       );
@@ -123,7 +129,11 @@ export class Client {
           event.data.length > 4 * 1024 * 1024
         )
           return;
-        this.onFrame(JSON.parse(event.data));
+        if (this.socket !== socket) return;
+        const frame = JSON.parse(event.data) as Frame;
+        if ((frame.type === "screen" || frame.type === "output") &&
+            (frame.terminalId !== this.watched || frame.watchId !== this.watchId)) return;
+        this.onFrame(frame);
       } catch {
         this.onConnection(false);
       }

@@ -28,3 +28,22 @@ export function readableLines(screen: string): ReadLine[] {
   if (last?.kind === "text" && !last.text) lines.pop();
   return lines;
 }
+
+// Reuse each unchanged row, including its text node, during busy screen updates.
+export function patchReadable(parent: HTMLElement, lines: ReadLine[]) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const tag = line.kind === "rule" ? "HR" : "DIV";
+    let row = parent.children[i] as HTMLElement | undefined;
+    if (!row || row.tagName !== tag) {
+      const next = document.createElement(tag.toLowerCase());
+      next.className = line.kind === "rule" ? "read-rule" : "read-line";
+      if (row) row.replaceWith(next);
+      else parent.append(next);
+      row = next;
+    }
+    if (line.kind === "text" && row.textContent !== line.text)
+      row.textContent = line.text;
+  }
+  while (parent.children.length > lines.length) parent.lastElementChild!.remove();
+}

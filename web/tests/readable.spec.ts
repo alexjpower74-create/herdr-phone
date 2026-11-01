@@ -69,6 +69,7 @@ const wideScreen = [
 
 async function setup(page: Page) {
   let text = wideScreen;
+  let watchId = "";
   const sockets: WebSocketRoute[] = [];
   const writes: { path: string; body: unknown }[] = [];
   await page.addInitScript(() =>
@@ -78,6 +79,7 @@ async function setup(page: Page) {
     JSON.stringify({
       type: "screen",
       terminalId: "t1",
+      watchId,
       cols: 200,
       rows: 120,
       text,
@@ -87,7 +89,8 @@ async function setup(page: Page) {
   await page.routeWebSocket("**/api/ws", (ws) => {
     sockets.push(ws);
     ws.onMessage((raw) => {
-      if (JSON.parse(String(raw)).type === "watch") ws.send(frame());
+      const request = JSON.parse(String(raw));
+      if (request.type === "watch") { watchId = request.watchId; ws.send(frame()); }
     });
     ws.send(JSON.stringify({ type: "state", state }));
   });
@@ -325,7 +328,7 @@ test.describe("screen scrolling", () => {
         )
           probe.paintedTop = el.scrollTop;
       });
-      observer.observe(read, { childList: true });
+      observer.observe(read, { childList: true, subtree: true, characterData: true });
       document.addEventListener("scroll", hold, true);
       (window as any).scrollProbe = probe;
       (window as any).releaseScrollProbe = () => {
@@ -546,4 +549,33 @@ test("unavailable preference storage still allows view changes", async ({ page }
     .tap();
   await expect(page.locator(".terminal-canvas")).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("busy Read patches retain unchanged nodes and identical frames do no work", async ({ page }) => {
+  const mock = await setup(page);
+  await page.getByRole("button", { name: "Show readable text", exact: true }).tap();
+  await expect(page.locator(".terminal-read")).toContainText("Earlier output 1:");
+  await page.evaluate(() => {
+    const read = document.querySelector(".terminal-read")!;
+    const first = read.firstElementChild!;
+    const probe = { replaced: 0, mutations: 0 };
+    new MutationObserver((records) => {
+      probe.mutations += records.length;
+      if (read.firstElementChild !== first) probe.replaced++;
+    }).observe(read, { childList: true, subtree: true, characterData: true });
+    (window as any).readProbe = probe;
+  });
+  const until = Date.now() + 5000;
+  let tick = 0;
+  while (Date.now() < until) {
+    mock.update(wideScreen + "\nBusy " + tick++);
+    await page.waitForTimeout(50);
+  }
+  await expect.poll(() => page.evaluate(() => (window as any).readProbe.mutations)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => (window as any).readProbe.replaced)).toBe(0);
+  await page.waitForTimeout(100);
+  const before = await page.evaluate(() => (window as any).readProbe.mutations);
+  for (let i = 0; i < 10; i++) mock.update(wideScreen + "\nBusy " + (tick - 1));
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => (window as any).readProbe.mutations)).toBe(before);
 });
