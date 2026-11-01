@@ -33,6 +33,7 @@ privately under `~/.config/herdr-phone/`; only token hashes are retained.
 | `HERDR_PHONE_CONFIG_DIR` | `~/.config/herdr-phone/` | Private device state |
 | `HERDR_PHONE_STATIC_DIR` | `web/dist` | Built web app |
 | `HERDR_PHONE_HC` | `hc` | Core client executable |
+| `HERDR_PHONE_TRANSCRIPTS_CONFIG` | `~/.config/herdr-phone/transcripts.json` | Private conversation source configuration |
 | `HERDR_PHONE_PROGRAMS` | Installed app configuration | Available terminal programs |
 | `HERDR_PHONE_VAPID_SUBJECT` | Configured HTTPS origin | HTTPS contact URL or mailto URI for push services |
 
@@ -67,14 +68,26 @@ Drafts remain separate for each terminal while the page is open. Failed sends
 keep the draft and are never replayed automatically. A blocked terminal shows
 its current dialog before offering a separate “Send anyway” action. Closing
 or reloading the page clears local drafts. The phone observes output without sending
-resize or focus changes. Older history is limited to what the core retains; a
-full-screen application may keep additional conversation history privately.
-The phone never scrolls that application to retrieve it.
+resize or focus changes. Mirror and Read show history retained by the core.
+**Conversation** opens saved messages from the current process's transcript,
+including conversations kept privately by full-screen applications. Messages
+load 50 turns at a time back to the beginning, with your messages highlighted
+and tool calls collapsed to one line. The phone never scrolls the application
+to retrieve them.
+
+Conversation sources are optional. Configure their private roots using the
+[conversation API configuration](docs/API.md#conversation-history). Local reads
+require Python 3; remote reads also require noninteractive SSH to the configured
+machine. No additional bridge or reader is installed remotely. Missing or
+ambiguous process-to-session matches show an unavailable state rather than
+selecting another conversation from the same working directory.
 
 See the [colour preview](docs/screens/terminal-colours-after-webkit.png),
 [history preview](docs/screens/terminal-history-after-webkit.png), and short
 [before/after display recording](docs/screens/terminal-display-before-after.mp4),
 all captured with neutral disposable-terminal output.
+The [saved conversation preview](docs/screens/conversation-history-webkit.png)
+shows the first message reached through paged history on a phone.
 
 ## Notifications
 

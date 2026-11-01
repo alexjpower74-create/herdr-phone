@@ -196,6 +196,12 @@ noninteractive SSH to the configured alias and a transient Python 3 reader sent
 over stdin; nothing is installed or written remotely. Local reads use the same
 read-only resolver. Neither path attaches to, sends input to, scrolls or resizes
 the terminal. Python 3 and SSH are runtime prerequisites for this optional source.
+Reads are bounded to 128 MiB per file, 4 MiB per JSONL record and 2 MiB of text
+per page; exceeding these limits returns 413 `conversation_too_large` rather
+than silently dropping messages. At most four readers run concurrently; excess
+requests return 429 `conversation_busy`. A reader timeout returns 503. Unchanged
+latest-page polls reuse the parsed result after verifying file and process
+identity. Device revocation is checked again before returning a completed read.
 
 `POST /api/terminals/:id/keys`, body `{ "keys": ["shift+tab"] }`, returns
 `{ "ok": true }` after core acknowledgement. Supported bar names are
