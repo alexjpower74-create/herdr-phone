@@ -215,7 +215,7 @@ finally:
   page.on("pageerror", (e: Error) => pageErrors.push(e.message));
   await page.goto(`${origin}/#terminal=${encodeURIComponent(terminalId!)}`);
   await page.locator(".terminal-viewport").waitFor();
-  await page.locator(".xterm-accessibility-tree").getByText("You: show the checks", { exact: true }).waitFor({ timeout: 15000 });
+  await page.locator(".xterm-accessibility-tree").getByText("You: show the checks", { exact: true }).waitFor({ state: "attached", timeout: 15000 });
   await size("phone observer only", headless);
   await page.evaluate(() => document.fonts.ready);
   const cells = await inspect(page, true);
