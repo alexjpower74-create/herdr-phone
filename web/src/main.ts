@@ -109,8 +109,16 @@ function scheduleObserverPaint() {
 }
 type TerminalView = "read" | "mirror";
 const VIEW_KEY = "herdr-phone.terminal-view";
+const CONVERSATION_DEFAULT_KEY = "herdr-phone.conversation-default";
 function preferredTerminalView(): TerminalView {
   try {
+    // Old device preferences selected the landing screen. They now describe
+    // only the terminal subview; start that subview in Mirror once on upgrade.
+    if (localStorage.getItem(CONVERSATION_DEFAULT_KEY) !== "1") {
+      localStorage.setItem(VIEW_KEY, "mirror");
+      localStorage.setItem(CONVERSATION_DEFAULT_KEY, "1");
+      return "mirror";
+    }
     return localStorage.getItem(VIEW_KEY) === "read" ? "read" : "mirror";
   } catch {
     return "mirror";
@@ -432,7 +440,8 @@ async function showTerminal(desired?: string) {
     },
     "view-toggle",
   );
-  const conversationToggle = button("Conversation", () => toggleConversation(!conversationOpen), "conversation-toggle");
+  viewToggle.hidden = true;
+  const conversationToggle = button("Terminal view", () => toggleConversation(!conversationOpen), "conversation-toggle");
   conversationToggle.setAttribute("aria-pressed", "false");
   tabHeader.append(tabs, viewToggle, conversationToggle);
   root.append(tabHeader);
@@ -563,6 +572,7 @@ async function showTerminal(desired?: string) {
   root.append(dock);
   renderAttachments();
   updateCompose();
+  toggleConversation(true);
   const id = active.id, generation = screenGeneration, lifetime = terminalEpoch;
   await terminalFontReady(terminalOptions, () => {
     if (active?.id === id && lifetime === terminalEpoch) refreshTerminalFont();
@@ -607,7 +617,13 @@ function toggleConversation(open: boolean) {
   conversationOpen = open;
   const viewport = root.querySelector<HTMLElement>(".terminal-viewport");
   if (viewport) viewport.hidden = open;
-  root.querySelector(".conversation-toggle")?.setAttribute("aria-pressed", String(open));
+  const toggle = root.querySelector<HTMLButtonElement>(".conversation-toggle");
+  if (toggle) {
+    toggle.textContent = open ? "Terminal view" : "Conversation";
+    toggle.setAttribute("aria-pressed", String(open));
+  }
+  const viewToggle = root.querySelector<HTMLButtonElement>(".view-toggle");
+  if (viewToggle) viewToggle.hidden = open;
   conversation?.show(open);
   if (!open) { setTerminalView(terminalView); scaleTerminal(); }
 }
