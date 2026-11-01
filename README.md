@@ -104,6 +104,11 @@ The [saved conversation preview](docs/screens/conversation-history-webkit.png)
 shows the first message reached through paged history on a phone.
 The [attachment preview](docs/screens/attachments-webkit.png) shows photo,
 text and PDF selections before Send in the disposable-terminal upload check.
+When the keyboard opens, the header and compose controls stay inside the
+visible app area. Safe-area padding is applied once, while the terminal and
+long menus scroll within the remaining space. The
+[keyboard layout preview](docs/screens/keyboard-layout-webkit.png) shows that
+area under an emulated 400px keyboard viewport; real phone verification follows.
 
 ## Notifications
 
