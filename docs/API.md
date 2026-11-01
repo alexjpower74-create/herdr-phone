@@ -144,6 +144,7 @@ type ConversationPage = {
   warnings?: Array<"long_output_trimmed" | "scan_limited">;
   turns: Array<{
     id: string;
+    continuesPrevious?: boolean; // first fragment starts before this byte window
     entries: Array<{
       id: string;
       role: "user" | "assistant" | "tool";
@@ -208,7 +209,12 @@ notice `[long output trimmed]` (`long_output_trimmed`). `scan_limited` tells the
 client that older messages remain beyond the current read window. Neither case
 is a whole-conversation failure. If a turn spans page boundaries, entry identities
 allow its older content to be prepended without replacing newer text or duplicating
-entries. Incomplete final records are never presented as complete messages.
+entries. The first turn can carry `continuesPrevious: true` when its user message
+lies before the read window. The signed older cursor carries that fragment's
+identity so the older page's tail can join it; a latest refresh reconciles by
+stable entry identity if its byte window starts at a different fragment. Older
+responses must not overwrite a newer copy of an entry. Incomplete final records
+are never presented as complete messages.
 
 Cursors bind the terminal/process/session, file identity, snapshot extent and
 bounded content guards around the read boundaries. They reject truncation,
