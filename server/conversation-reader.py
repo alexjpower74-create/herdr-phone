@@ -1,5 +1,5 @@
 """Read-only, bounded transcript resolver. Executed locally or over SSH stdin."""
-import os, sys, json, hashlib, subprocess, time, stat, collections, re, base64
+import os, sys, json, hashlib, subprocess, time, stat, collections, re, base64, signal
 MAX_FILE = 128 * 1024 * 1024
 MAX_LINE = 4 * 1024 * 1024
 MAX_SCAN = 30000
@@ -13,7 +13,7 @@ def process(pid):
         if sys.platform.startswith('linux'):
             raw = open('/proc/%d/stat' % pid).read().rsplit(')', 1)[1].split()
             return {'pid':pid, 'start':raw[19], 'parent':int(raw[1]), 'cwd':os.path.realpath('/proc/%d/cwd' % pid),
-                    'domain':'linux:'+open('/proc/sys/kernel/random/boot_id').read().strip().replace('-','')+':'+os.readlink('/proc/%d/ns/pid'%pid)}
+                    'domain':'linux:'+open('/etc/machine-id').read().strip()+':'+os.readlink('/proc/%d/ns/pid'%pid)}
         row = command(['ps','-p',str(pid),'-o','ppid=','-o','lstart=','-o','etime=']).split()
         elapsed = row[-1].split('-'); days = int(elapsed.pop(0)) if len(elapsed)>1 else 0
         values=list(map(int,elapsed[0].split(':'))); seconds=days*86400+sum(x*60**i for i,x in enumerate(reversed(values)))
@@ -170,6 +170,11 @@ def read(req):
                 selected=entries(record,fmt,offset)
                 # A multipart user message starts one turn, not one turn per text block.
                 fresh=[e for e in selected if e[2] not in seen]
+                for role,text,key in selected:
+                    if key in seen:
+                        for retained in turns:
+                            for entry in retained['entries']:
+                                if entry['id']==key and entry['role']==role: entry['text']=text
                 if fresh and fresh[0][0]=='user':
                     current={'id':str(offset),'entries':[],'offset':offset}
                     if before is None or offset<before: turns.append(current)
@@ -191,9 +196,14 @@ def read(req):
         # A concurrent append is safe; any other concurrent mutation requires retry.
         if after.st_size==st.st_size and (after.st_mtime_ns,after.st_ctime_ns)!=(st.st_mtime_ns,st.st_ctime_ns): raise Problem('changed')
     if identity(process(proc['pid']))!=identity(proc) or identity(process(rootproc['pid']))!=identity(rootproc): raise Problem('changed')
+    # Descriptor closure, index replacement and new competing descendants also invalidate a read.
+    again=resolve(req)
+    if (again[0],again[1],again[2],identity(again[3]),identity(again[4]))!=(path,fmt,sid,identity(proc),identity(rootproc)): raise Problem('changed')
     return result
 
 try:
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(Problem("unavailable")))
+    signal.alarm(10)
     request=json.loads(base64.b64decode(sys.argv[1]))
     print(json.dumps(read(request),separators=(',',':')))
 except Problem as e: print(json.dumps({'error':e.code}))

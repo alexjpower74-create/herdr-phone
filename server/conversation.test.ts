@@ -122,3 +122,43 @@ test("route requires auth, accepts only a single before, rechecks revocation and
     expect((await get()).status).toBe(401);
   } finally { app.stop(); await rm(root, { recursive: true, force: true }); }
 });
+
+test("PID index without open descriptor validates process start, cwd, domain and session", async () => {
+  if (process.platform !== "linux") return;
+  await fixture("messages", async ({ file, path, config, root, source }: any) => {
+    await file.close();
+    const raw = (await readFile(`/proc/${process.pid}/stat`, "utf8")).split(")").at(-1)!.trim().split(/\s+/);
+    const { readlink } = await import("node:fs/promises");
+    const domain = `linux:${(await readFile("/etc/machine-id", "utf8")).trim()}:${await readlink(`/proc/${process.pid}/ns/pid`)}`;
+    const index = { pid: process.pid, sessionId: "sample-session", cwd: process.cwd(), procStart: raw[19], pidDomain: domain, startedAt: Date.now() };
+    const indexPath = join(root, `${process.pid}.json`);
+    await writeFile(config, JSON.stringify({ machines: { local: { sources: [{ format: "messages", root, sessions: root }] } } }));
+    await writeFile(indexPath, JSON.stringify(index));
+    expect((await source("t1")).available).toBe(true);
+    for (const bad of [{ procStart: "0" }, { pidDomain: "wrong" }, { cwd: "/missing" }, { sessionId: "unrelated" }, { pid: 1 }]) {
+      await writeFile(indexPath, JSON.stringify({ ...index, ...bad }));
+      expect((await source("t1")).reason).toBe("not_found");
+    }
+    await writeFile(indexPath, JSON.stringify(index));
+    expect((await source("t1")).turns).toHaveLength(2);
+  });
+});
+
+test("same-ID final reply snapshots replace text without duplicate entries", async () => {
+  await fixture("responses", async ({ source, path }: any) => {
+    await appendFile(path, reply("Working") + "\n");
+    const first = await source("t1");
+    await appendFile(path, reply("Finished") + "\n");
+    const second = await source("t1");
+    expect(second.turns.at(-1).id).toBe(first.turns.at(-1).id);
+    expect(second.turns.at(-1).entries).toHaveLength(first.turns.at(-1).entries.length);
+    expect(second.turns.at(-1).entries.at(-1)).toEqual({ ...first.turns.at(-1).entries.at(-1), text: "Finished" });
+  });
+});
+
+test("resource limits return explicit errors instead of truncating transcript data", async () => {
+  await fixture("responses", async ({ source, path }: any) => {
+    await appendFile(path, "x".repeat(4 * 1024 * 1024 + 1));
+    await expect(source("t1")).rejects.toMatchObject({ status: 413, code: "conversation_too_large" });
+  });
+});
