@@ -23,4 +23,4 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends imagemagick poppler-utils
       - name: Bridge checks
-        run: bun test server
+        run: bun test ./server

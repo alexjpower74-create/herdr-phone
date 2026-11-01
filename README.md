@@ -45,7 +45,7 @@ their history. Interactive verification must use disposable terminals.
 
 ## Development checks
 
-Run `bun test server` for bridge checks and `tools/check-no-personal-data`
+Run `bun test ./server` for bridge checks and `tools/check-no-personal-data`
 before publishing. The scanner's `--self-test` mode proves it rejects planted
 private values, including values placed inside the scanner itself. Tests use
 temporary private state and fake core processes; they do not type into existing
