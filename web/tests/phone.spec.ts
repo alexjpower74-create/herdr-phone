@@ -96,7 +96,7 @@ const suppliedPrompt = {
 const prompt =
   "Allow this operation?\n› 1. Yes\n  2. No\nPress Enter to confirm";
 type Call = { path: string; body: any; auth: string | undefined };
-async function setup(page: Page, paired = true) {
+async function setup(page: Page, paired = true, path = "/") {
   const calls: Call[] = [];
   const sockets: WebSocketRoute[] = [];
   let typed = "",
@@ -189,7 +189,7 @@ async function setup(page: Page, paired = true) {
     }
     return route.fulfill({ json: { ok: true } });
   });
-  await page.goto("/");
+  await page.goto(path);
   return { calls, sockets };
 }
 async function open(page: Page) {
@@ -988,4 +988,38 @@ test("prompt choices disappear on disconnect and consumed prompts stay hidden", 
     "Repeated prompt processed",
   );
   await expect(page.locator("#approvals button")).toHaveCount(0);
+});
+
+test("notification deep link opens remote terminal at empty startup", async ({
+  page,
+}) => {
+  await setup(page, true, "/#terminal=remote%2Ft3");
+  await expect(
+    page.getByRole("heading", { name: "Remote work", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Shell", exact: true }),
+  ).toHaveAttribute("aria-current", "true");
+});
+
+test("notification deep link switches from an already open local terminal", async ({
+  page,
+}) => {
+  await setup(page);
+  await open(page);
+  await page.evaluate(() => {
+    const link = document.createElement("a");
+    link.href = "/#terminal=remote%2Ft3";
+    link.textContent = "Mock notification target";
+    link.style.cssText =
+      "position:fixed;top:70px;left:20px;z-index:1000;background:black;padding:14px";
+    document.body.append(link);
+  });
+  await page.getByRole("link", { name: "Mock notification target" }).tap();
+  await expect(
+    page.getByRole("heading", { name: "Remote work", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Shell", exact: true }),
+  ).toHaveAttribute("aria-current", "true");
 });

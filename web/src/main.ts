@@ -6,6 +6,7 @@ import "@fontsource/jetbrains-mono/400.css";
 import "./style.css";
 import { ApiError, Client } from "./client";
 import { readableLines } from "./readable";
+import { notificationSettings } from "./notifications";
 import type { State, Space, Tab, TerminalInfo, Frame, Prompt } from "./types";
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const client = new Client();
@@ -102,6 +103,7 @@ function header(title: string, back = false) {
   return head;
 }
 function pairing(message = "") {
+  root.querySelectorAll("dialog").forEach((dialog) => dialog.close());
   appEpoch++;
   disposeTerminal();
   root.replaceChildren();
@@ -881,41 +883,8 @@ function newSpace(
   };
 }
 function settings() {
-  const dialog = modal("Device");
-  dialog.append(
-    button(
-      "Enable notifications",
-      async () => {
-        try {
-          if (!("serviceWorker" in navigator) || !("PushManager" in window))
-            throw new Error(
-              "Add Herdr to your Home Screen to enable notifications.",
-            );
-          const permission = await Notification.requestPermission();
-          if (permission !== "granted")
-            throw new Error("Notifications are not enabled.");
-          const registration = await navigator.serviceWorker.ready;
-          const { publicKey } = await client.request<{ publicKey: string }>(
-            "/push/key",
-          );
-          const raw = atob(publicKey.replace(/-/g, "+").replace(/_/g, "/"));
-          const key = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-          const subscription =
-            (await registration.pushManager.getSubscription()) ??
-            (await registration.pushManager.subscribe({
-              userVisibleOnly: true,
-              applicationServerKey: key,
-            }));
-          await client.request("/push/subscription", subscription.toJSON());
-          notice("Notifications enabled.");
-          dialog.close();
-        } catch (e) {
-          notice((e as Error).message);
-        }
-      },
-      "settings-action",
-    ),
-  );
+  const dialog = modal("Settings");
+  if (client.token) notificationSettings(dialog, client);
   dialog.append(
     button(
       "Disconnect this phone",
@@ -971,7 +940,13 @@ client.onUnauthorized = () => {
   pairing("Pair this phone to continue.");
 };
 window.addEventListener("hashchange", () => {
-  if (state) frame({ type: "state", state });
+  if (!state) return;
+  const requested = new URLSearchParams(location.hash.slice(1)).get("terminal");
+  const found = state.spaces.find((s) =>
+    s.tabs.some((t) => t.terminals.some((x) => x.id === requested)),
+  );
+  if (found && requested) openSpace(found, requested);
+  else frame({ type: "state", state });
 });
 if ("serviceWorker" in navigator)
   navigator.serviceWorker.register("/sw.js").catch(() => {});

@@ -527,3 +527,31 @@ dialog::backdrop {
   overflow: auto;
   font-size: 12px;
 }
+.notification-settings {
+  border-bottom: 1px solid #34353d;
+  padding-bottom: 16px;
+  margin-bottom: 12px;
+}
+.notification-settings h3 {
+  font-size: 16px;
+  margin: 8px 0 12px;
+}
+.notification-settings .muted {
+  font-size: 14px;
+  min-height: 66px;
+}
+.notification-toggle {
+  display: block;
+  width: 100%;
+  border: 1px solid #444650;
+  border-radius: 10px;
+}
+.notification-toggle[aria-checked="true"] {
+  color: #a3e3cb;
+  border-color: #38856c;
+  background: #203a32;
+}
+
+.settings-action[hidden] {
+  display: none;
+}
