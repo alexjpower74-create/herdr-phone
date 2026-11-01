@@ -39,7 +39,7 @@ for (const stream of [false, true]) test(`held font measures first ${stream ? "s
   await expect.poll(mock.held).toBeGreaterThan(0);
   await page.waitForTimeout(150);
   // A premature open caches fallback cell and glyph widths, causing the first-open spacing bug.
-  await expect(page.locator(".xterm")).toHaveCount(0);
+  const premature = await page.locator(".xterm").count();
   await expect(page.getByRole("button", { name: "esc", exact: true })).toBeVisible();
   mock.release();
   await expect(page.locator(".terminal-canvas:not(.observer-staging) .xterm-rows")).toContainText("Readable terminal");
@@ -48,6 +48,7 @@ for (const stream of [false, true]) test(`held font measures first ${stream ? "s
   console.log("font metrics", { stream, first });
   expect(Math.abs(first.cell - first.glyph)).toBeLessThan(0.04);
   expect(Math.abs(first.spacing)).toBeLessThan(0.04);
+  expect(premature).toBe(0);
   expect(first.width).toBeLessThanOrEqual(366);
   await page.getByRole("button", { name: "‹", exact: true }).tap();
   await page.getByRole("button", { name: "S Sample", exact: true }).tap();
