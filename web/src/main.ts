@@ -5,6 +5,7 @@ import "@fontsource/geist/500.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "./style.css";
 import { terminalFontReady, remeasureTerminalFont } from "./terminal-font";
+import { draft, selectFiles, preview, removeFile, clearDraft, releasePreviews, forgetDrafts, type SelectedFile } from "./attachments";
 import { Conversation } from "./conversation";
 import { ApiError, Client } from "./client";
 import { readableLines, type ReadLine } from "./readable";
@@ -116,18 +117,58 @@ let terminalView: TerminalView = preferredTerminalView(),
   followingNewest = true,
   readPosition = 0,
   readSource: string | undefined;
-const drafts = new Map<string, { text: string; revision: number }>();
 const pending = new Set<string>();
-function draft(id: string) {
-  if (!drafts.has(id)) drafts.set(id, { text: "", revision: 0 });
-  return drafts.get(id)!;
+let submissionEpoch = 0;
+const submissions = new Map<string, AbortController>();
+type Submission = {
+  id: string;
+  text: string;
+  revision: number;
+  files: SelectedFile[];
+  uploads: string[];
+  epoch: number;
+  controller: AbortController;
+};
+function cancelSubmissions() {
+  submissionEpoch++;
+  for (const controller of submissions.values()) controller.abort();
+  submissions.clear();
+}
+function validSubmission(saved: Submission) {
+  return connected && active?.id === saved.id && saved.epoch === submissionEpoch && !saved.controller.signal.aborted;
+}
+function renderAttachments() {
+  const host = root.querySelector<HTMLElement>(".attachments");
+  if (!host || !active) return;
+  host.replaceChildren();
+  const id = active.id;
+  for (const selected of draft(id).files) {
+    const chip = element("div", "attachment");
+    const url = preview(selected);
+    if (url) {
+      const image = element("img", "attachment-preview");
+      image.src = url;
+      image.alt = "";
+      image.onerror = () => { image.remove(); };
+      chip.append(image);
+    }
+    chip.append(element("span", "attachment-name", selected.file.name));
+    const remove = button("×", () => {
+      removeFile(draft(id), selected.key);
+      renderAttachments();
+      updateCompose();
+    }, "attachment-remove");
+    remove.setAttribute("aria-label", `Remove ${selected.file.name}`);
+    chip.append(remove);
+    host.append(chip);
+  }
 }
 function updateCompose() {
   const input = root.querySelector<HTMLTextAreaElement>(".terminal-input");
   const submit = root.querySelector<HTMLButtonElement>(".compose-send");
   if (active && input && submit) {
     input.value = draft(active.id).text;
-    submit.disabled = pending.has(active.id) || !connected || !input.value;
+    submit.disabled = pending.has(active.id) || !connected || (!input.value && !draft(active.id).files.length);
     submit.textContent = pending.has(active.id) ? "Sending…" : "Send";
   }
 }
@@ -159,6 +200,8 @@ function notice(message: string) {
   el.textContent = message;
 }
 function disposeTerminal() {
+  cancelSubmissions();
+  releasePreviews();
   terminalEpoch++;
   conversation?.dispose();
   conversation = undefined;
@@ -492,9 +535,27 @@ async function showTerminal(desired?: string) {
     () => void submitDraft(idForDraft),
     "primary compose-send",
   );
-  compose.append(input, submit);
-  dock.append(keys, compose);
+  const picker = element("input", "attachment-picker");
+  picker.type = "file";
+  picker.accept = "image/*,application/pdf,text/*";
+  picker.multiple = true;
+  picker.hidden = true;
+  const attach = button("📎", () => picker.click(), "attach-files");
+  attach.setAttribute("aria-label", "Attach files");
+  picker.onchange = () => {
+    const error = selectFiles(draft(idForDraft), [...(picker.files ?? [])]);
+    picker.value = "";
+    if (error) notice(error);
+    renderAttachments();
+    updateCompose();
+  };
+  const attachments = element("div", "attachments");
+  attachments.setAttribute("aria-label", "Selected files");
+  compose.append(input, attach, submit);
+  dock.append(keys, attachments, picker, compose);
   root.append(dock);
+  renderAttachments();
+  updateCompose();
   const id = active.id, generation = screenGeneration, lifetime = terminalEpoch;
   await terminalFontReady(terminalOptions, () => {
     if (active?.id === id && lifetime === terminalEpoch) refreshTerminalFont();
@@ -781,7 +842,7 @@ async function refreshScreen(id: string) {
 function keyAction(key: string) {
   if (!active || !connected)
     return notice("Connection unavailable. Input was not sent.");
-  if (key === "enter" && draft(active.id).text)
+  if (key === "enter" && (draft(active.id).text || draft(active.id).files.length))
     return void submitDraft(active.id);
   const id = active.id;
   void client
@@ -792,74 +853,65 @@ function keyAction(key: string) {
       ),
     );
 }
-async function submitDraft(id: string, forceScreenId?: string) {
+async function submitDraft(id: string, forceScreenId?: string, captured?: Submission) {
   if (pending.has(id)) return;
-  if (!connected)
-    return notice(
-      "Connection unavailable. Draft retained; nothing was replayed.",
-    );
+  if (!connected || active?.id !== id)
+    return notice("Connection unavailable. Draft and files retained; nothing was replayed.");
   const saved = draft(id);
-  const text = saved.text;
-  const revision = saved.revision;
-  if (!text) return;
+  const submission = captured ?? {
+    id, text: saved.text, revision: saved.revision, files: [...saved.files], uploads: [],
+    epoch: submissionEpoch, controller: new AbortController(),
+  };
+  if ((!submission.text && !submission.files.length) || !validSubmission(submission)) return;
   pending.add(id);
+  submissions.set(id, submission.controller);
   updateCompose();
   try {
-    await client.action(id, "send", {
-      text,
-      ...(forceScreenId ? { force: true, screenId: forceScreenId } : {}),
-    });
-    if (saved.revision === revision) {
-      saved.text = "";
-      saved.revision++;
+    // Capture once: later edits and removals belong to the next message.
+    if (!captured) for (const selected of submission.files) {
+      if (!validSubmission(submission)) throw new Error("Sending was cancelled.");
+      const result = await client.upload(id, selected.file, submission.controller.signal);
+      if (!validSubmission(submission)) throw new Error("Sending was cancelled.");
+      submission.uploads.push(result.upload.id);
     }
+    if (!validSubmission(submission)) throw new Error("Sending was cancelled.");
+    await client.action(id, "send", {
+      text: submission.text,
+      ...(submission.uploads.length ? { uploads: submission.uploads } : {}),
+      ...(forceScreenId ? { force: true, screenId: forceScreenId } : {}),
+    }, submission.controller.signal);
+    if (!validSubmission(submission)) throw new Error("Delivery outcome is unknown after disconnection.");
+    if (saved.revision === submission.revision) clearDraft(saved);
   } catch (error) {
-    notice(
-      `${(error as Error).message} Draft retained. Delivery may be unknown; check the terminal before sending again.`,
-    );
-    if (
-      error instanceof ApiError &&
-      error.code === "terminal_blocked" &&
-      !forceScreenId &&
-      active?.id === id
-    ) {
+    if (!client.token) return;
+    notice("Draft and files retained. Delivery may be unknown; check the terminal before sending again.");
+    if (error instanceof ApiError && error.code === "terminal_blocked" && !forceScreenId && validSubmission(submission)) {
       const screen = await refreshScreen(id);
-      if (screen && active?.id === id && connected) {
+      if (screen && validSubmission(submission)) {
         const dialog = modal("Terminal is waiting for a choice");
         dialog.append(element("pre", "blocked-screen", screen.text));
-        dialog.append(
-          element(
-            "p",
-            "muted",
-            "Sending this draft may answer the current dialog.",
-          ),
-        );
-        dialog.append(
-          button(
-            "Send anyway",
-            async () => {
-              dialog.close();
-              // Refresh after deliberate confirmation, then let the bridge revalidate at dispatch.
-              const fresh = await refreshScreen(id);
-              if (!fresh || active?.id !== id || !connected) return;
-              if (fresh.screenId !== screen.screenId) {
-                notice(
-                  "The dialog changed. Draft retained; review the current dialog before sending again.",
-                );
-                return;
-              }
-              void submitDraft(id, fresh.screenId);
-            },
-            "primary",
-          ),
-        );
+        dialog.append(element("p", "muted", "Sending this message and its selected files may answer the current dialog."));
+        dialog.append(button("Send anyway", async () => {
+          dialog.close();
+          if (!validSubmission(submission)) return;
+          const fresh = await refreshScreen(id);
+          if (!fresh || !validSubmission(submission)) return;
+          if (fresh.screenId !== screen.screenId) {
+            notice("The dialog changed. Draft and files retained; review the current dialog before sending again.");
+            return;
+          }
+          void submitDraft(id, fresh.screenId, submission);
+        }, "primary"));
       }
     }
   } finally {
+    if (submissions.get(id) === submission.controller) submissions.delete(id);
     pending.delete(id);
+    renderAttachments();
     updateCompose();
   }
 }
+
 function frame(message: Frame) {
   if (message.type === "state") {
     state = message.state;
@@ -888,6 +940,7 @@ function frame(message: Frame) {
     const changed = connected !== message.connected;
     connected = message.connected;
     if (!connected) {
+      cancelSubmissions();
       client.cancelPending();
       if (active)
         notice(
@@ -1028,6 +1081,7 @@ function settings() {
       async () => {
         try {
           await client.request("/device", undefined, "DELETE");
+          forgetDrafts();
           client.forget();
           dialog.close();
           pairing();
@@ -1050,6 +1104,7 @@ async function start() {
     client.onConnection = (value) => {
       const changed = connected !== value;
       connected = value;
+      if (!value) cancelSubmissions();
       conversation?.connection(value);
       if (!value && active)
         notice(
@@ -1073,10 +1128,14 @@ async function start() {
   }
 }
 client.onUnauthorized = () => {
+  cancelSubmissions();
+  forgetDrafts();
   client.forget();
   state = undefined;
   pairing("Pair this phone to continue.");
 };
+window.addEventListener("pagehide", () => { cancelSubmissions(); releasePreviews(); });
+window.addEventListener("pageshow", renderAttachments);
 window.addEventListener("hashchange", () => {
   if (!state) return;
   const requested = new URLSearchParams(location.hash.slice(1)).get("terminal");
