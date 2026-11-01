@@ -49,13 +49,18 @@ test('deliberate top pull reveals earlier messages and returns to newest in Mirr
   await page.locator('input[type=file]').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('A saved attachment') });
   await page.locator('.terminal-input').blur();
   await expect(page.getByText('Earlier messages are in Conversation ↑', { exact: true })).toBeVisible();
+  if (process.env.GESTURE_SHOTS) await page.screenshot({ path: `${process.env.GESTURE_SHOTS}/terminal-hint.png` });
   for (const mode of ['mirror', 'read']) {
     if (mode === 'read') await page.getByRole('button', { name: 'Show readable text' }).tap();
     await touch(page, 'touchStart', [{ id: 1, x, y }]);
     await touch(page, 'touchMove', [{ id: 1, x, y: y + 20 }]);
     await expect(page.getByText('Earlier messages', { exact: true })).toBeVisible();
-    publishScreen(`Screen update during ${mode} pull`);
-    await expect(page.locator('.terminal-history-hint')).toHaveText('Earlier messages');
+    for (let frame = 1; frame <= 3; frame++) {
+      const text = `Screen update ${frame} during ${mode} pull`;
+      publishScreen(text);
+      await expect(page.locator(mode === 'read' ? '.terminal-read' : '.xterm-accessibility-tree')).toContainText(text);
+      await expect(page.locator('.terminal-history-hint')).toHaveText('Earlier messages');
+    }
     await expect(page.locator('.terminal-viewport')).toBeVisible();
     if (process.env.GESTURE_SHOTS) await page.screenshot({ path: `${process.env.GESTURE_SHOTS}/pull-${mode}.png` });
     await touch(page, 'touchMove', [{ id: 1, x, y: y + 110 }]);
