@@ -6,13 +6,16 @@ self.addEventListener("activate", (event) =>
 function safePath(value) {
   if (value === "/") return "/";
   if (typeof value !== "string" || !value.startsWith("/#terminal=")) return "/";
-  const encoded = value.slice(12);
+  const encoded = value.slice("/#terminal=".length);
   try {
     const id = decodeURIComponent(encoded);
-    if (id.length > 160 || !/^(?:[a-zA-Z0-9_.-]+\/)?t[0-9]+$/.test(id)) return "/";
+    if (id.length > 160 || !/^(?:[a-zA-Z0-9_.-]+\/)?t[0-9a-z]+$/.test(id))
+      return "/";
     if (encodeURIComponent(id) !== encoded) return "/";
     return `/#terminal=${encodeURIComponent(id)}`;
-  } catch { return "/"; }
+  } catch {
+    return "/";
+  }
 }
 self.addEventListener("push", (event) => {
   let payload = {};
@@ -23,13 +26,14 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification("Herdr", {
       body:
-        (payload.body === "Notifications are on") ||
-        typeof payload.body === "string" &&
-        payload.body.length <= 240 &&
-        /^[^\x00-\x1f\x7f]+ (?:needs you|finished)$/.test(payload.body)
+        payload.body === "Notifications are on" ||
+        (typeof payload.body === "string" &&
+          payload.body.length <= 240 &&
+          /^[^\x00-\x1f\x7f]+ (?:needs you|finished)$/.test(payload.body))
           ? payload.body
           : "A terminal needs you",
-      tag: typeof payload.tag === "string" ? payload.tag.slice(0, 240) : undefined,
+      tag:
+        typeof payload.tag === "string" ? payload.tag.slice(0, 240) : undefined,
       data: { url },
       icon: "/icon-192.png",
     }),
@@ -37,14 +41,20 @@ self.addEventListener("push", (event) => {
 });
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = new URL(safePath(event.notification.data?.url), self.location.origin)
-    .href;
+  const url = new URL(
+    safePath(event.notification.data?.url),
+    self.location.origin,
+  ).href;
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then(async (clients) => {
         for (const client of clients) {
-          if ("navigate" in client && new URL(client.url || self.location.origin).origin === self.location.origin) {
+          if (
+            "navigate" in client &&
+            new URL(client.url || self.location.origin).origin ===
+              self.location.origin
+          ) {
             await client.navigate(url);
             return client.focus();
           }

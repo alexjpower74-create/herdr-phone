@@ -103,6 +103,7 @@ function header(title: string, back = false) {
   return head;
 }
 function pairing(message = "") {
+  root.querySelectorAll("dialog").forEach((dialog) => dialog.close());
   appEpoch++;
   disposeTerminal();
   root.replaceChildren();
@@ -941,7 +942,9 @@ client.onUnauthorized = () => {
 window.addEventListener("hashchange", () => {
   if (!state) return;
   const requested = new URLSearchParams(location.hash.slice(1)).get("terminal");
-  const found = state.spaces.find(s => s.tabs.some(t => t.terminals.some(x => x.id === requested)));
+  const found = state.spaces.find((s) =>
+    s.tabs.some((t) => t.terminals.some((x) => x.id === requested)),
+  );
   if (found && requested) openSpace(found, requested);
   else frame({ type: "state", state });
 });
