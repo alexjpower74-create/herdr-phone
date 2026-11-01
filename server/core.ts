@@ -44,6 +44,8 @@ export class Core implements RPC {
   connected = false;
   starting?: Promise<void>;
   stopped = false;
+  onFrame?: (value: { channel: number; kind: number; body: Buffer }) => void;
+  onDisconnect?: () => void;
   async connect() {
     if (this.connected) return;
     if (this.starting) return this.starting;
@@ -69,6 +71,7 @@ export class Core implements RPC {
             this.pending.delete(id);
           }
         proc.kill();
+        this.onDisconnect?.();
       };
       const timer = setTimeout(fail, 5000);
       proc.on("error", fail);
@@ -93,7 +96,11 @@ export class Core implements RPC {
             chunk = hello.subarray(nl + 1);
           }
           for (const f of frames.feed(chunk)) {
-            if (f.channel !== 0 || f.kind !== 0) continue;
+            if (f.channel !== 0) {
+              this.onFrame?.(f);
+              continue;
+            }
+            if (f.kind !== 0) continue;
             const answer = JSON.parse(f.body.toString());
             const p = this.pending.get(answer.id);
             if (!p) continue;

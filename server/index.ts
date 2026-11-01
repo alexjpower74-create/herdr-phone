@@ -7,6 +7,7 @@ import { Snapshot, terminal } from "./state";
 import { createSpace } from "./spaces";
 import { detectPrompt } from "./prompts";
 import { Push, endpoint, subscription, type PushTransport } from "./push";
+import { observe, type ObserverFactory, type Observation } from "./observer";
 import { randomBytes } from "node:crypto";
 import { PushEvents, notification } from "./push-events";
 
@@ -14,6 +15,14 @@ type SocketData = {
   token: string;
   deviceId: string;
   watch?: string;
+  watchId?: string;
+  messageId?: number;
+  generation?: number;
+  history?: number;
+  observer?: Observation;
+  screenKey?: string;
+  cols?: number;
+  rows?: number;
   busy?: boolean;
   revision?: number;
   connected?: boolean;
@@ -84,6 +93,7 @@ export function start(
     store?: Store;
     staticDir?: string;
     pushTransport?: PushTransport;
+    observerFactory?: ObserverFactory;
   } = {},
 ) {
   const port = options.port ?? Number(process.env.HERDR_PHONE_PORT || 8790);
@@ -99,6 +109,75 @@ export function start(
   const push = new Push(store, origin, options.pushTransport);
   const sockets = new Set<any>(),
     queues = new Map<string, Promise<any>>();
+  const observerFactory = options.observerFactory ?? (core instanceof Core ? observe : undefined);
+  function release(ws: any) {
+    ws.data.generation = (ws.data.generation || 0) + 1;
+    ws.data.observer?.close();
+    ws.data.observer = undefined;
+    ws.data.watch = undefined;
+    ws.data.screenKey = undefined;
+  }
+  function closeSocket(ws: any, code = 1013, reason = "Slow consumer") {
+    release(ws);
+    sockets.delete(ws);
+    ws.close(code, reason);
+  }
+  function send(ws: any, value: any) {
+    if (!sockets.has(ws)) throw Error("Socket closed");
+    // A queued send has ambiguous delivery. Close instead of acknowledging it
+    // to the core and letting an unbounded replay build behind the phone.
+    if (ws.getBufferedAmount() > 128 * 1024 || ws.send(JSON.stringify(value)) <= 0) {
+      closeSocket(ws);
+      throw Error("Socket backpressure");
+    }
+  }
+  async function watch(ws: any, id: string, watchId: string, history: number) {
+    release(ws);
+    ws.data.watch = id;
+    ws.data.watchId = watchId;
+    ws.data.history = history;
+    const generation = ws.data.generation;
+    const current = () => sockets.has(ws) && ws.data.generation === generation;
+    let seq = 0;
+    let failed = false;
+    let observation: Observation | undefined;
+    try {
+      const facts = terminal(await core.call("terminal.get", { terminal: id }));
+      await store.auth(ws.data.token);
+      if (!current()) return;
+      ws.data.cols = facts.cols;
+      ws.data.rows = facts.rows;
+      const unavailable = () => {
+        if (!current() || failed) return;
+        failed = true;
+        observation?.close();
+        ws.data.observer = undefined;
+        send(ws, { type: "error", terminalId: id, watchId,
+          code: "observer_unavailable", message: "Live observation unavailable. Showing current screen only." });
+      };
+      if (facts.state !== "live" || !observerFactory) unavailable();
+      else {
+        const observer = observerFactory({ terminalId: id, history, cols: facts.cols, rows: facts.rows }, async (bytes, size) => {
+          await store.auth(ws.data.token).catch((e) => { closeSocket(ws, 4001, "Device revoked"); throw e; });
+          if (!current() || failed) throw Error("Superseded observation");
+          if (bytes.length > 16384) { closeSocket(ws); throw Error("Oversized output"); }
+          if (size) { ws.data.cols = size.cols; ws.data.rows = size.rows; }
+          send(ws, { type: "output", terminalId: id, watchId, history,
+            cols: ws.data.cols, rows: ws.data.rows, seq, reset: seq === 0,
+            data: bytes.toString("base64") });
+          seq++;
+        }, unavailable);
+        observation = observer;
+        if (!current() || failed) observer.close();
+        else ws.data.observer = observer;
+      }
+      void tick(ws);
+    } catch (e) {
+      if (!current()) return;
+      if (e instanceof Failure && e.status === 401) closeSocket(ws, 4001, "Device revoked");
+      else send(ws, { type: "error", terminalId: id, watchId, code: "observer_unavailable", message: "Live observation unavailable. Showing current screen only." });
+    }
+  }
   const root = resolve(
     options.staticDir || process.env.HERDR_PHONE_STATIC_DIR || "web/dist",
   );
@@ -253,7 +332,7 @@ export function start(
             await store.revoke(device.id);
             for (const ws of sockets)
               if (ws.data.deviceId === device.id)
-                ws.close(4001, "Device revoked");
+                closeSocket(ws, 4001, "Device revoked");
             return new Response(null, { status: 204 });
           }
           if (path === "/api/push/key" && req.method === "GET")
@@ -416,34 +495,26 @@ export function start(
         void tick(ws);
       },
       async message(ws, raw) {
+        const messageId = ws.data.messageId = (ws.data.messageId || 0) + 1;
         try {
           await store.auth(ws.data.token);
+          if (!sockets.has(ws) || ws.data.messageId !== messageId) return;
           const msg = JSON.parse(String(raw));
-          if (msg.type === "unwatch") {
-            ws.data.watch = undefined;
-            return;
-          }
+          if (msg.type === "unwatch") { release(ws); return; }
           if (
             msg.type !== "watch" ||
             typeof msg.terminalId !== "string" ||
-            !/^(?:[A-Za-z0-9_.-]+\/)?t[a-zA-Z0-9]+$/.test(msg.terminalId)
-          )
-            throw invalid();
-          ws.data.watch = msg.terminalId;
-          void tick(ws);
+            !/^(?:[A-Za-z0-9_.-]+\/)?t[a-zA-Z0-9]+$/.test(msg.terminalId) ||
+            (msg.watchId !== undefined && (typeof msg.watchId !== "string" || !/^[A-Za-z0-9_.:-]{1,64}$/.test(msg.watchId))) ||
+            (msg.history !== undefined && (!Number.isInteger(msg.history) || msg.history < 0 || msg.history > 100000))
+          ) throw invalid();
+          void watch(ws, msg.terminalId, msg.watchId ?? randomBytes(12).toString("hex"), msg.history ?? 500);
         } catch (e) {
-          ws.send(
-            JSON.stringify({
-              type: "error",
-              code: "invalid_request",
-              message: "Request rejected.",
-            }),
-          );
+          if (e instanceof Failure && e.status === 401) closeSocket(ws, 4001, "Device revoked");
+          else send(ws, { type: "error", code: "invalid_request", message: "Request rejected." });
         }
       },
-      close(ws) {
-        sockets.delete(ws);
-      },
+      close(ws) { release(ws); sockets.delete(ws); },
     },
   });
   async function tick(ws: any) {
@@ -452,37 +523,44 @@ export function start(
     try {
       await store.auth(ws.data.token);
       const snapshot = await state.get();
+      await store.auth(ws.data.token);
+      if (!sockets.has(ws)) return;
       if (ws.data.connected !== true) {
-        ws.send(JSON.stringify({ type: "connection", connected: true }));
+        send(ws, { type: "connection", connected: true });
         ws.data.connected = true;
       }
       if (ws.data.revision !== snapshot.revision) {
-        ws.send(JSON.stringify({ type: "state", state: snapshot }));
+        send(ws, { type: "state", state: snapshot });
         ws.data.revision = snapshot.revision;
       }
-      const id = ws.data.watch;
+      const id = ws.data.watch, generation = ws.data.generation;
       if (id) {
         const s = await screen(id);
-        if (ws.data.watch === id)
-          ws.send(
-            JSON.stringify({
-              type: "screen",
-              terminalId: id,
-              cols: s.terminal.cols,
-              rows: s.terminal.rows,
-              text: s.text,
-              screenId: s.screenId,
-              prompt: s.prompt,
-            }),
-          );
+        await store.auth(ws.data.token);
+        if (sockets.has(ws) && ws.data.generation === generation && ws.data.watch === id) {
+          if (ws.data.observer && (ws.data.cols !== s.terminal.cols || ws.data.rows !== s.terminal.rows)) {
+            closeSocket(ws, 1012, "Terminal dimensions changed");
+            return;
+          }
+          ws.data.cols = s.terminal.cols;
+          ws.data.rows = s.terminal.rows;
+          const value = { type: "screen", terminalId: id, watchId: ws.data.watchId,
+            cols: s.terminal.cols, rows: s.terminal.rows, text: s.text,
+            screenId: s.screenId, prompt: s.prompt };
+          const key = JSON.stringify(value);
+          if (key !== ws.data.screenKey) { send(ws, value); ws.data.screenKey = key; }
+        }
       }
     } catch (e) {
       if (e instanceof Failure && e.status === 401)
-        ws.close(4001, "Device revoked");
+        closeSocket(ws, 4001, "Device revoked");
       else {
         ws.data.connected = false;
         ws.data.revision = undefined;
-        ws.send(JSON.stringify({ type: "connection", connected: false }));
+        if (sockets.has(ws)) {
+          try { send(ws, { type: "connection", connected: false }); }
+          finally { closeSocket(ws, 1012, "Core reconnecting"); }
+        }
       }
     } finally {
       ws.data.busy = false;
@@ -494,6 +572,12 @@ export function start(
   let pendingNotices = 0;
   const consumeEvent = (message: any) => {
     if (stopped) return;
+    const event = message?.method === "event" ? message.params : undefined;
+    if (event?.type === "size" && typeof event.terminal === "string") {
+      for (const ws of sockets)
+        if (ws.data.watch === event.terminal)
+          closeSocket(ws, 1012, "Terminal dimensions changed");
+    }
     for (const notice of notifications.consume(message)) {
       if (pendingNotices >= 128) continue;
       pendingNotices++;
@@ -522,7 +606,7 @@ export function start(
             for (const ws of sockets) {
               ws.data.connected = false;
               ws.data.revision = undefined;
-              ws.send(JSON.stringify({ type: "connection", connected: false }));
+              closeSocket(ws, 1012, "Core reconnecting");
             }
           },
           consumeEvent,
@@ -540,12 +624,13 @@ export function start(
     notifications,
     events,
     drainNotifications: () => delivery,
+    consumeCoreEvent: consumeEvent,
     stop() {
       stopped = true;
       push.stopped = true;
       events?.close();
       clearInterval(interval);
-      for (const ws of sockets) ws.close();
+      for (const ws of sockets) closeSocket(ws, 1001, "Server stopped");
       server.stop(true);
       if (core instanceof Core) core.close();
     },
