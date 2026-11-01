@@ -102,3 +102,10 @@ The latest page of a generated 300 MiB transcript must load in under 300 ms on
 the verification host, and paging must reach its first message. Error messages
 distinguish absent history, offline machines and reader failures. The same path
 is verified read-only on an existing large transcript, without terminal input.
+
+Terminal view also leads to saved history by gesture: a deliberate downward pull
+past the top shows an “Earlier messages” affordance and opens Conversation at the
+newest saved message. A top hint reads “Earlier messages are in Conversation ↑”.
+Normal terminal scrolling, pinch zoom, compose drafts and terminal controls remain
+available. Verification uses trusted native touch events in mobile WebKit, with
+the missing handoff observed before implementation and deliberate failure controls.
