@@ -151,6 +151,31 @@ test("normalization preserves qualified ids and cached offline spaces", async ()
   expect(snap.machines[1].online).toBe(false);
   expect(snap.spaces[1].tabs[0].terminals[0].id).toBe("remote/t1");
 });
+test("local machine display name is configurable with a neutral fallback", async () => {
+  const previous = process.env.HERDR_PHONE_LOCAL_NAME;
+  try {
+    process.env.HERDR_PHONE_LOCAL_NAME = " Workstation ";
+    const configured = await new Snapshot(new Mock()).get();
+    expect(configured.machines[0]).toEqual({
+      id: "local", name: "Workstation", online: true,
+    });
+    delete process.env.HERDR_PHONE_LOCAL_NAME;
+    expect((await new Snapshot(new Mock()).get()).machines[0].name).toBe("This computer");
+    process.env.HERDR_PHONE_LOCAL_NAME = "   ";
+    expect((await new Snapshot(new Mock()).get()).machines[0].name).toBe("This computer");
+  } finally {
+    if (previous === undefined) delete process.env.HERDR_PHONE_LOCAL_NAME;
+    else process.env.HERDR_PHONE_LOCAL_NAME = previous;
+  }
+});
+test("remote machine display names are capitalized without changing routing ids", async () => {
+  const core = new Mock();
+  const snapshot = await new Snapshot(core).get();
+  expect(snapshot.machines[1]).toEqual({ id: "remote", name: "Remote", online: true });
+  expect(snapshot.spaces[1].machineId).toBe("remote");
+  expect(snapshot.spaces[1].tabs[0].terminals[0].id).toBe("remote/t1");
+  expect(core.calls.some(({ method, p }) => method === "doc.get" && p.on === "remote")).toBe(true);
+});
 test("HTTP rejects absent/revoked tokens, wrong origins and URL credentials; input ack order and history zero", async () => {
   const dir = await temp(),
     store = new Store(dir),
