@@ -29,6 +29,7 @@ const { webkit } = requireWeb("@playwright/test");
 const { createServer } = await import(new URL("../web/node_modules/vite/dist/node/index.js", import.meta.url).href);
 const report: any = { sha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), label, checks: [], sizes: [] };
 let app: ReturnType<typeof start> | undefined, vite: any, browser: any, context: any;
+let sizingObserver: { close(): void } | undefined;
 let terminalId: string | undefined, desktopChannel: number | undefined, beforeFocus: unknown;
 let before: any[] = [], commandId = 0;
 const desktop = () => JSON.parse(execFileSync("herdr-app", ["status"], { encoding: "utf8" }));
@@ -324,6 +325,21 @@ finally:
   await context.close(); context = undefined;
   if (video) await video.saveAs(join(directory, `terminal-display-${label}-webkit.webm`));
   await size("phone disconnect", headless);
+  if (!baseline) {
+    const { Observer } = await import("../server/observer");
+    let received = false, failed = false;
+    sizingObserver = new Observer({ terminalId: terminalId!, history: 0, cols: 13, rows: 7 },
+      async () => { received = true; }, () => { failed = true; });
+    await eventually(async () => received && !failed, "Mismatched-size observer did not receive output");
+    await size("13x7 observer request alone", headless);
+    desktopChannel = (await desktopCore.call("terminal.attach", { terminal: terminalId, observe: false, cols: 100, rows: 30, history: 0 })).channel;
+    await size("13x7 observer while desktop joins", [100, 30]);
+    desktopCore.process!.stdin.write(frame(desktopChannel, 2, Buffer.alloc(0)));
+    desktopChannel = undefined;
+    await size("13x7 observer after desktop leaves", headless);
+    sizingObserver.close(); sizingObserver = undefined;
+    await size("13x7 observer disconnect", headless);
+  }
   check("no browser errors", pageErrors.length === 0, pageErrors);
   app.stop(); app = undefined;
   await recordersStopped();
@@ -349,6 +365,7 @@ finally:
     await attempt(() => browser?.close());
     await attempt(() => vite?.close());
     await attempt(() => app?.stop());
+    await attempt(() => sizingObserver?.close());
     await attempt(() => recordersStopped());
     await attempt(() => desktopCore.close());
     if (terminalId) {
