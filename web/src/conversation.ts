@@ -19,7 +19,8 @@ export class Conversation {
   private online = true;
   private initialized = false;
   private timer: ReturnType<typeof setInterval>;
-  constructor(private client: Client, private id: string) {
+  constructor(private client: Client, private id: string, online: boolean) {
+    this.online = online;
     this.host.className = "conversation";
     this.host.hidden = true;
     this.host.setAttribute("aria-label", "Saved conversation");
@@ -50,7 +51,8 @@ export class Conversation {
     this.visible = value;
     this.host.hidden = !value;
     this.cancel();
-    if (value) void this.load();
+    if (value && this.online) void this.load();
+    else if (value) this.failure("Conversation is offline. Reconnect and retry.");
   }
   connection(online: boolean) {
     this.online = online;
@@ -78,7 +80,9 @@ export class Conversation {
   private async load(older = false) {
     if (!this.visible || document.hidden) return;
     if (older && (!this.cursor || this.loadingOlder)) return;
-    if (!older && [...this.requests].length && !this.loadingOlder) return;
+    // A page is a snapshot: serialize reads so an older snapshot cannot overwrite
+    // a newer final turn, or clear another request's loading state.
+    if (this.requests.size) return;
     const epoch = this.epoch, session = this.session;
     const controller = new AbortController();
     this.requests.add(controller);
@@ -95,7 +99,9 @@ export class Conversation {
         this.failure(page.reason === "offline" ? "Conversation is offline. Reconnect and retry." : "Saved conversation is unavailable for this terminal.");
         return;
       }
-      const reset = !this.initialized || page.session !== this.session;
+      const reset = !this.initialized || page.session !== this.session ||
+        (!older && this.nodes.size > 0 &&
+          !page.turns.some(turn => this.nodes.has(turn.id)));
       if (reset) {
         this.cancel();
         this.nodes.clear(); this.list.replaceChildren(); this.session = page.session;
