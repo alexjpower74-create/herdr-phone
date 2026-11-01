@@ -86,10 +86,6 @@ test("watch generation, history, ordering, dimensions, screen dedupe, unwatch an
     await wait(() => f.messages.some(m => m.type === "screen"));
     await Bun.sleep(800);
     expect(f.messages.filter(m => m.type === "screen")).toHaveLength(1);
-    f.core.cols = 120;
-    await wait(() => f.messages.some(m => m.type === "screen" && m.cols === 120));
-    await first.output(Buffer.from("resized"));
-    await wait(() => f.messages.some(m => m.type === "output" && m.cols === 120));
     watching("history", 1000);
     await wait(() => f.observations.length === 2);
     expect(first.closed).toBe(true);
@@ -201,4 +197,24 @@ test("oversized observer output closes socket and releases channel", async () =>
     expect(await closed).toBe(1013);
     expect(f.observations[0].closed).toBe(true);
   } finally { await f.cleanup(); }
+});
+
+test("geometry changes release affected observations for a fresh replay via event or polling", async () => {
+  for (const source of ["event", "poll"]) {
+    const f = await socketFixture();
+    try {
+      f.ws.send(JSON.stringify({ type: "watch", terminalId: "remote/t1", watchId: "geometry" }));
+      await wait(() => f.observations.length === 1);
+      const closed = new Promise<number>(resolve => f.ws.onclose = e => resolve(e.code));
+      await f.observations[0].output(Buffer.from("old-width"));
+      if (source === "event") {
+        f.app.consumeCoreEvent({ method: "event", params: { type: "size", terminal: "t9", data: { cols: 120, rows: 24 } } });
+        expect(f.observations[0].closed).toBe(false);
+        f.app.consumeCoreEvent({ method: "event", params: { type: "size", terminal: "remote/t1", data: { cols: 120, rows: 24 } } });
+      } else f.core.cols = 120;
+      expect(await closed).toBe(1012);
+      expect(f.observations[0].closed).toBe(true);
+      await expect(f.observations[0].output(Buffer.from("new-width"))).rejects.toThrow();
+    } finally { await f.cleanup(); }
+  }
 });

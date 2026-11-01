@@ -538,6 +538,10 @@ export function start(
         const s = await screen(id);
         await store.auth(ws.data.token);
         if (sockets.has(ws) && ws.data.generation === generation && ws.data.watch === id) {
+          if (ws.data.observer && (ws.data.cols !== s.terminal.cols || ws.data.rows !== s.terminal.rows)) {
+            closeSocket(ws, 1012, "Terminal dimensions changed");
+            return;
+          }
           ws.data.cols = s.terminal.cols;
           ws.data.rows = s.terminal.rows;
           const value = { type: "screen", terminalId: id, watchId: ws.data.watchId,
@@ -568,6 +572,12 @@ export function start(
   let pendingNotices = 0;
   const consumeEvent = (message: any) => {
     if (stopped) return;
+    const event = message?.method === "event" ? message.params : undefined;
+    if (event?.type === "size" && typeof event.terminal === "string") {
+      for (const ws of sockets)
+        if (ws.data.watch === event.terminal)
+          closeSocket(ws, 1012, "Terminal dimensions changed");
+    }
     for (const notice of notifications.consume(message)) {
       if (pendingNotices >= 128) continue;
       pendingNotices++;
@@ -614,6 +624,7 @@ export function start(
     notifications,
     events,
     drainNotifications: () => delivery,
+    consumeCoreEvent: consumeEvent,
     stop() {
       stopped = true;
       push.stopped = true;
