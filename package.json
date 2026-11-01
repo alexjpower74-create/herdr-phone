@@ -1,0 +1,16 @@
+{
+  "name": "herdr-phone",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": { "bun": ">=1.4.4" },
+  "scripts": {
+    "start": "bun server/index.ts",
+    "pair": "bun bin/herdr-phone pair",
+    "build": "bun run --cwd web build",
+    "test:server": "bun test server",
+    "check:privacy": "tools/check-no-personal-data",
+    "check:privacy-self-test": "tools/check-no-personal-data --self-test"
+  }
+}

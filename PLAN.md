@@ -54,3 +54,26 @@ Keep it simple but effective. Reference: `home-reference.png` (the Herdr app's S
 - It runs at a new address next to Collie until you OK the swap, so nothing you have now breaks.
 - Only your paired devices can see or touch an agent. A paired phone is like a login to your PC, so revoke a lost phone at once.
 - Nothing is shown to you as done until it works on your phone.
+
+## Implementation boundaries
+
+The browser and bridge contract is [docs/API.md](docs/API.md). Slice work is
+isolated on branches and merged only after a cross-review of the first working
+commit and focused verification.
+
+| Slice | Owned paths | Development port |
+|---|---|---|
+| Bridge | `server/`, `bin/`, `docs/API.md` | 8791 |
+| Web | `web/` | 5176; browser tests 5177 |
+| Integration | Root configuration, `tools/`, CI, documentation and merges | 8790; verification 8792 |
+
+Phase 1 requires a token-authenticated request listing actual spaces from the
+local and remote core. Authentication, pairing expiry, failed attempts,
+single-use consumption and revocation are tested independently. Terminal input
+and observation checks use disposable terminals exclusively. No test resizes
+existing desktop terminals, modifies active work or changes desktop focus.
+
+Published fixtures and screenshots use neutral sample data. Local evidence,
+machine configuration and credentials stay outside the tracked tree. One final
+whole-suite run follows the phase reviews; intermediate runs target changed
+behaviour only.
