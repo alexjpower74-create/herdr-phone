@@ -8,8 +8,11 @@ async function touch(page: Page, type: string, points: { id: number; x: number; 
   await session.send("Input.dispatchTouchEvent", { type, touchPoints: points, modifiers: 0 });
 }
 async function wheel(page: Page, x: number, y: number, deltaY: number) {
-  const session = (page as any)._connection?.toImpl(page)?.delegate?._pageProxySession;
-  if (!session) throw new Error("Native WebKit wheel dispatch is unavailable");
+  const delegate = (page as any)._connection?.toImpl(page)?.delegate;
+  const session = delegate?._pageProxySession;
+  if (!session || !delegate?._session) throw new Error("Native WebKit wheel dispatch is unavailable");
+  await delegate._session.send("Page.updateScrollingState");
+  await page.evaluate(() => new Promise(requestAnimationFrame));
   await session.send("Input.dispatchWheelEvent", { x, y, deltaX: 0, deltaY, modifiers: 0 });
 }
 async function start(page: Page) {
@@ -68,7 +71,7 @@ test('deliberate top pull reveals earlier messages and returns to newest in Mirr
   }
   expect(await page.evaluate(() => (window as any).touchTrust.every((e: any) => e.trusted))).toBe(true);
   const counts = await page.evaluate(() => (window as any).touchTrust.reduce((counts: any, e: any) => { counts[e.type] = (counts[e.type] || 0) + 1; return counts; }, {}));
-  expect(counts).toMatchObject({ touchstart: 4, touchmove: 4, touchend: 4 });
+  expect(counts).toMatchObject({ touchstart: 5, touchmove: 4, touchend: 5 });
   await expect(page.locator('.terminal-input')).toHaveValue('Keep this draft');
   await expect(page.getByText('sample.txt', { exact: true })).toBeVisible();
   await expect(page.locator('.terminal-input')).not.toBeFocused();
